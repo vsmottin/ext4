@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+# Imagens
+*.img
+*.iso
+*.tar.gz
+
+# Editor
+.vscode/
