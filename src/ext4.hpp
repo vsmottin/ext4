@@ -50,7 +50,14 @@ namespace Ext4
         uint8_t s_journal_uuid[16];        // 0xD0 - UUID do journal
         uint32_t s_journal_inum;           // 0xE0 - Número do inode do journal
 
-        uint8_t padding[796]; // 0xE4 - Preenchimento
+        uint32_t s_journal_dev;            // 0xE4 - Dispositivo do journal
+        uint32_t s_last_orphan;            // 0xE8 - Lista de inodes orfãos
+        uint32_t s_hash_seed[4];           // 0xEC - Seed do hash
+        uint8_t s_def_hash_version;        // 0xFC - Versão do hash padrão
+        uint8_t s_jnl_backup_type;         // 0xFD - Tipo de backup do journal
+        uint16_t s_desc_size;              // 0xFE - Tamanho do descritor
+
+        uint8_t padding[768];              // 0x100 - Preenchimento
 
     public:
         std::string getVolumeName();
@@ -61,15 +68,63 @@ namespace Ext4
         std::string getErrorBehavior();
         void superBlockStats();
     };
-    // class GroupDescriptor {
-    //     uint32_t bg_block_bitmap_lo;           // 0x00 - Bloco do bitmap de blocos
-    //     uint32_t bg_inode_bitmap_lo;           // 0x04 - Bloco do bitmap de inodes
-    //     uint32_t bg_inode_table_lo;            // 0x08 - Bloco do inode table
-    //     uint16_t bg_free_blocks_count_lo;      // 0x0C - Blocos livres
-    //     uint16_t bg_free_inodes_count;         // 0x0E - Inodes livres
-    //     uint16_t bg_used_dirs_count;           // 0x10 - Diretórios usados
 
-    // };
+    struct GroupDescriptor {
+        uint32_t bg_block_bitmap_lo;      // 0x00 - Bloco do bitmap de blocos
+        uint32_t bg_inode_bitmap_lo;      // 0x04 - Bloco do bitmap de inodes
+        uint32_t bg_inode_table_lo;       // 0x08 - Bloco do inode table
+        uint16_t bg_free_blocks_count_lo; // 0x0C - Blocos livres
+        uint16_t bg_free_inodes_count;    // 0x0E - Inodes livres
+        uint16_t bg_used_dirs_count;      // 0x10 - Diretórios usados
+        uint16_t bg_flags;                // 0x12 - Flags do grupo
+        uint32_t bg_exclude_bitmap_lo;    // 0x14 - Bloco do bitmap de exclusão
+        uint16_t bg_block_bitmap_csum_lo; // 0x18 - Checksum do bitmap de blocos
+        uint16_t bg_inode_bitmap_csum_lo; // 0x1A - Checksum do bitmap de inodes
+        uint16_t bg_itable_unused_lo;     // 0x1C - Inodes não utilizados
+        uint16_t bg_checksum;             // 0x1E - Checksum do grupo
+        uint32_t bg_block_bitmap_hi;      // 0x20 - Bloco do bitmap de blocos
+        uint32_t bg_inode_bitmap_hi;      // 0x24 - Bloco do bitmap de inodes
+        uint32_t bg_inode_table_hi;       // 0x28 - Bloco da tabela de inodes
+        uint16_t bg_free_blocks_count_hi; // 0x2C - Blocos livres
+        uint16_t bg_free_inodes_count_hi; // 0x2E - Inodes livres
+        uint16_t bg_used_dirs_count_hi;   // 0x30 - Diretórios usados
+        uint16_t bg_itable_unused_hi;     // 0x32 - Inodes não utilizados
+        uint32_t bg_exclude_bitmap_hi;    // 0x34 - Bloco do bitmap de exclusão
+        uint16_t bg_block_bitmap_csum_hi; // 0x38 - Checksum do bitmap de blocos
+        uint16_t bg_inode_bitmap_csum_hi; // 0x3A - Checksum do bitmap de inodes
+        uint32_t bg_reserved;             // 0x3C - Padding reservado
+    };
+
+    struct Inode{
+        uint16_t i_mode;         // 0x00 - Tipo e permissões do arquivo
+        uint16_t i_uid;          // 0x02 - UID do proprietário
+        uint32_t i_size_lo;      // 0x04 - Tamanho do arquivo (parte baixa)
+        uint32_t i_atime;        // 0x08 - Tempo do último acesso
+        uint32_t i_ctime;        // 0x0C - Tempo da última alteração
+        uint32_t i_mtime;        // 0x10 - Tempo da última modificação
+        uint32_t i_dtime;        // 0x14 - Tempo da exclusão
+        uint16_t i_gid;          // 0x18 - GID (parte baixa)
+        uint16_t i_links_count;  // 0x1A - Contagem de links sólidos
+        uint32_t i_blocks_lo;    // 0x1C - Número de blocos alocados (parte baixa)
+        uint32_t i_flags;        // 0x20 - Flags do inode
+        uint32_t i_osd1;         // 0x24 - Sistema operacional específico
+        uint32_t i_block[15];    // 0x28 - Ponteiros para blocos de dados
+        uint32_t i_generation;   // 0x64 - Número de geração do arquivo
+        uint32_t i_file_acl_lo;  // 0x68 - Ponteiro para ACL do arquivo (parte baixa)
+        uint32_t i_size_high;    // 0x6C - Tamanho do arquivo (parte alta)
+        uint32_t i_obso_faddr;   // 0x70 - Ponteiro obsoleto para o arquivo
+        uint8_t i_osd2[12];      // 0x74 - Sistema operacional específico
+        uint16_t i_extra_isize;  // 0x80 - Tamanho extra do inode
+        uint16_t i_checksum_hi;  // 0x82 - Checksum do inode (parte alta)
+        uint32_t i_ctime_extra;  // 0x84 - Tempo extra da última alteração
+        uint32_t i_mtime_extra;  // 0x88 - Tempo extra da última modificação
+        uint32_t i_atime_extra;  // 0x8C - Tempo extra do último acesso
+        uint32_t i_crtime;       // 0x90 - Tempo de criação do inode
+        uint32_t i_crtime_extra; // 0x94 - Tempo extra de criação do inode
+        uint32_t i_version_hi;   // 0x98 - Versão do inode
+        uint32_t i_projid;       // 0x9C - ID do projeto
+    };
+
     class FileSystemManager
     {
     private:
