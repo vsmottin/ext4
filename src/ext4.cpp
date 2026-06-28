@@ -87,6 +87,31 @@ string Ext4::SuperBlock::getErrorBehavior(){
     }
 }
 
+uint32_t Ext4::SuperBlock::getBlockSize(){
+    return 1024 << this-> s_log_block_size;
+}
+
+uint32_t Ext4::SuperBlock::getBlocksPerGroup(){
+    return this-> s_blocks_per_group;
+}
+
+uint32_t Ext4::SuperBlock::getInodesPerGroup(){
+    return this-> s_inodes_per_group;
+}
+
+uint32_t Ext4::SuperBlock::getBlockGroupsCount(){
+    uint32_t blocksCount = this-> s_blocks_count_lo;
+    uint32_t blocksPerGroup = this-> s_blocks_per_group;
+
+    if(blocksPerGroup == 0) return 0;
+
+    return (blocksCount + blocksPerGroup - 1) / blocksPerGroup;
+}
+
+uint32_t Ext4::SuperBlock::getFirstDataBlock(){
+    return this-> s_first_data_block;
+}
+
 string Ext4::SuperBlock::getMagic(){
     switch (this->s_magic)
     {
@@ -124,6 +149,19 @@ bool Ext4::FileSystemManager::setImage(string fileName){
     
     file.seekg(1024);
     file.read(reinterpret_cast<char *>(&this->sb), sizeof(SuperBlock));
+
+    uint32_t blockSize = this-> sb.getBlockSize();
+
+    //block group descriptor table.
+    uint32_t bgdtStartBlock = (blockSize == 1024) ? 2 : 1; 
+
+    uint64_t bgdtOffset = bgdtStartBlock * blockSize;
+    file.seekg(bgdtOffset);
+
+    uint32_t blockGroupsCount = this-> sb.getBlockGroupsCount();
+    this-> group_descriptors.resize(blockGroupsCount);
+    file.read(reinterpret_cast<char *>(this-> group_descriptors.data()), sizeof(GroupDescriptor) * blockGroupsCount);
+
     file.close();
     this->image_file = move(file);
     return true;

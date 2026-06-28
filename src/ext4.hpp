@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <fstream>
+#include <vector>
 // Definição das classes e variáveis
 
 #pragma once
@@ -67,6 +68,12 @@ namespace Ext4
         std::string getCreatorOS();
         std::string getErrorBehavior();
         void superBlockStats();
+        
+        uint32_t getBlockSize();
+        uint32_t getBlockGroupsCount();
+        uint32_t getInodesPerGroup();
+        uint32_t getBlocksPerGroup();
+        uint32_t getFirstDataBlock();
     };
 
     struct GroupDescriptor {
@@ -130,9 +137,13 @@ namespace Ext4
     private:
         std::ifstream image_file;
         SuperBlock sb;
+        std::vector<GroupDescriptor> group_descriptors;
+        
     public:
         bool setImage(std::string fileName);
         bool info();
+        void testi(uint32_t inode);
+        void testb(uint32_t bloco);
     };
 }
 #pragma pack(pop)
