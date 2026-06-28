@@ -162,7 +162,6 @@ bool Ext4::FileSystemManager::setImage(string fileName){
     this-> group_descriptors.resize(blockGroupsCount);
     file.read(reinterpret_cast<char *>(this-> group_descriptors.data()), sizeof(GroupDescriptor) * blockGroupsCount);
 
-    file.close();
     this->image_file = move(file);
     return true;
 }
@@ -170,4 +169,68 @@ bool Ext4::FileSystemManager::setImage(string fileName){
 bool Ext4::FileSystemManager::info(){
     this->sb.superBlockStats();
     return true;
+}
+
+void Ext4::FileSystemManager::testi(uint32_t inode){
+    if (inode == 0 || inode > this-> sb.getBlockGroupsCount() * this-> sb.getInodesPerGroup()) {
+        cout << vermelho << "Erro: Inode fora dos limites." << reset << endl;
+        return;
+    }
+
+    uint32_t inodesPerGroup = this-> sb.getInodesPerGroup();
+    uint32_t blockGroup = (inode - 1) / inodesPerGroup;
+    uint32_t localIndex = (inode - 1) % inodesPerGroup;
+
+    GroupDescriptor desc = this-> group_descriptors[blockGroup];
+    uint32_t bitmapBlock = desc.bg_inode_bitmap_lo;
+    uint32_t blockSize = this-> sb.getBlockSize();
+    uint64_t bitmapOffset = static_cast<uint64_t>(bitmapBlock) * blockSize;
+    uint32_t byteOffset = localIndex / 8;
+    uint32_t bitOffset = localIndex % 8;
+
+    this-> image_file.clear(); 
+    this-> image_file.seekg(bitmapOffset + byteOffset);
+    
+    uint8_t byte;
+    this->image_file.read(reinterpret_cast<char*>(&byte), 1);
+
+    bool isUsed = (byte & (1 << bitOffset)) != 0;
+    if (isUsed) {
+        cout << "Inode " << inode << " está " << vermelho << "OCUPADO" << reset << endl;
+    } else {
+        cout << "Inode " << inode << " está " << verde << "LIVRE" << reset << endl;
+    }
+}
+
+void Ext4::FileSystemManager::testb(uint32_t bloco){
+    if (bloco == 0 || bloco > this-> sb.getBlockGroupsCount() * this-> sb.getBlocksPerGroup()) {
+        cout << vermelho << "Erro: Bloco fora dos limites." << reset << endl;
+        return;
+    }
+
+    uint32_t firstDataBlock = this-> sb.getFirstDataBlock();
+    uint32_t blocksPerGroup = this-> sb.getBlocksPerGroup();
+
+    uint32_t blockGroup = (bloco - firstDataBlock) / blocksPerGroup;
+    uint32_t localIndex = (bloco - firstDataBlock) % blocksPerGroup;
+    
+    GroupDescriptor desc = this-> group_descriptors[blockGroup];
+    uint32_t bitmapBlock = desc.bg_block_bitmap_lo;
+    uint32_t blockSize = this-> sb.getBlockSize();
+    uint64_t bitmapOffset = static_cast<uint64_t>(bitmapBlock) * blockSize;
+    uint32_t byteOffset = localIndex / 8;
+    uint32_t bitOffset = localIndex % 8;
+
+    this-> image_file.clear(); 
+    this-> image_file.seekg(bitmapOffset + byteOffset);
+    
+    uint8_t byte;
+    this->image_file.read(reinterpret_cast<char*>(&byte), 1);
+
+    bool isUsed = (byte & (1 << bitOffset)) != 0;
+    if (isUsed) {
+        cout << "Bloco " << bloco << " está " << vermelho << "OCUPADO" << reset << endl;
+    } else {
+        cout << "Bloco " << bloco << " está " << verde << "LIVRE" << reset << endl;
+    }
 }
