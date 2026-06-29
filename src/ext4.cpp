@@ -88,7 +88,7 @@ string Ext4::SuperBlock::getErrorBehavior(){
 }
 
 uint32_t Ext4::SuperBlock::getBlockSize(){
-    return 1024 << this-> s_log_block_size;
+    return 2^(10 + this-> s_log_block_size) << this-> s_log_block_size;
 }
 
 uint32_t Ext4::SuperBlock::getBlocksPerGroup(){
@@ -102,10 +102,11 @@ uint32_t Ext4::SuperBlock::getInodesPerGroup(){
 uint32_t Ext4::SuperBlock::getBlockGroupsCount(){
     uint32_t blocksCount = this-> s_blocks_count_lo;
     uint32_t blocksPerGroup = this-> s_blocks_per_group;
+    uint32_t firstDataBlock = this-> s_first_data_block;
 
     if(blocksPerGroup == 0) return 0;
 
-    return (blocksCount + blocksPerGroup - 1) / blocksPerGroup;
+    return (blocksCount - firstDataBlock + blocksPerGroup - 1) / blocksPerGroup;
 }
 
 uint32_t Ext4::SuperBlock::getFirstDataBlock(){
