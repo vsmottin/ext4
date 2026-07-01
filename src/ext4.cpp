@@ -1,8 +1,9 @@
 #include "ext4.hpp"
 #include "cores.h"
-#include <string>
 #include <fstream>
 #include <iostream>
+#include <string>
+#include <vector>
 
 using namespace std;
 
@@ -88,7 +89,7 @@ string Ext4::SuperBlock::getErrorBehavior(){
 }
 
 uint32_t Ext4::SuperBlock::getBlockSize(){
-    return 2^(10 + this-> s_log_block_size) << this-> s_log_block_size;
+    return 1024 << this-> s_log_block_size; //mesmo que 2^(10 +  sb.s_log_block_size).
 }
 
 uint32_t Ext4::SuperBlock::getBlocksPerGroup(){
@@ -121,6 +122,34 @@ string Ext4::SuperBlock::getMagic(){
     default:
         return "Desconhecido";
     }
+}
+
+uint32_t Ext4::SuperBlock::getInodeSize(){
+    return this-> s_inode_size;
+}
+
+Inode Ext4::FileSystemManager::readInode(uint32_t inode){
+    if (inode == 0 || inode > this-> sb.getBlockGroupsCount() * this-> sb.getInodesPerGroup()) {
+        cout << vermelho << "Erro: Inode fora dos limites." << reset << endl;
+        return Inode{};
+    }
+
+    uint32_t inodesPerGroup = this-> sb.getInodesPerGroup();
+    uint32_t blockGroup = (inode - 1) / inodesPerGroup;
+    uint32_t localIndex = (inode - 1) % inodesPerGroup;
+
+    GroupDescriptor desc = this-> group_descriptors[blockGroup];
+    uint32_t inodeTableBlock = desc.bg_inode_table_lo;
+    uint32_t blockSize = this-> sb.getBlockSize();
+    uint32_t inodeSize = this-> sb.getInodeSize();
+    uint64_t tableOffset = static_cast<uint64_t>(inodeTableBlock) * blockSize + localIndex * inodeSize;
+
+    Inode node{};
+    this-> image_file.clear(); 
+    this-> image_file.seekg(tableOffset);
+    this-> image_file.read(reinterpret_cast<char*>(&node), sizeof(Inode));
+
+    return node;
 }
 
 void Ext4::SuperBlock::superBlockStats()
@@ -203,8 +232,8 @@ void Ext4::FileSystemManager::testi(uint32_t inode){
     }
 }
 
-void Ext4::FileSystemManager::testb(uint32_t bloco){
-    if (bloco == 0 || bloco > this-> sb.getBlockGroupsCount() * this-> sb.getBlocksPerGroup()) {
+void Ext4::FileSystemManager::testb(uint32_t block){
+    if (block == 0 || block > this-> sb.getBlockGroupsCount() * this-> sb.getBlocksPerGroup()) {
         cout << vermelho << "Erro: Bloco fora dos limites." << reset << endl;
         return;
     }
@@ -212,8 +241,8 @@ void Ext4::FileSystemManager::testb(uint32_t bloco){
     uint32_t firstDataBlock = this-> sb.getFirstDataBlock();
     uint32_t blocksPerGroup = this-> sb.getBlocksPerGroup();
 
-    uint32_t blockGroup = (bloco - firstDataBlock) / blocksPerGroup;
-    uint32_t localIndex = (bloco - firstDataBlock) % blocksPerGroup;
+    uint32_t blockGroup = (block - firstDataBlock) / blocksPerGroup;
+    uint32_t localIndex = (block - firstDataBlock) % blocksPerGroup;
     
     GroupDescriptor desc = this-> group_descriptors[blockGroup];
     uint32_t bitmapBlock = desc.bg_block_bitmap_lo;
@@ -230,8 +259,8 @@ void Ext4::FileSystemManager::testb(uint32_t bloco){
 
     bool isUsed = (byte & (1 << bitOffset)) != 0;
     if (isUsed) {
-        cout << "Bloco " << bloco << " está " << vermelho << "OCUPADO" << reset << endl;
+        cout << "Bloco " << block << " está " << vermelho << "OCUPADO" << reset << endl;
     } else {
-        cout << "Bloco " << bloco << " está " << verde << "LIVRE" << reset << endl;
+        cout << "Bloco " << block << " está " << verde << "LIVRE" << reset << endl;
     }
 }

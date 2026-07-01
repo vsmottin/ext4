@@ -1,10 +1,14 @@
 #include <stdint.h>
 #include <fstream>
 #include <vector>
+#include <string>
 // Definição das classes e variáveis
 
 #pragma once
 #pragma pack(push, 1)
+
+#define EXT4_NAME_LEN 255
+
 namespace Ext4
 {
     class SuperBlock
@@ -74,6 +78,7 @@ namespace Ext4
         uint32_t getInodesPerGroup();
         uint32_t getBlocksPerGroup();
         uint32_t getFirstDataBlock();
+        uint32_t getInodeSize();
     };
 
     struct GroupDescriptor {
@@ -132,18 +137,66 @@ namespace Ext4
         uint32_t i_projid;       // 0x9C - ID do projeto
     };
 
+    struct ExtentHeader{
+        uint16_t eh_magic;
+        uint16_t eh_entries;
+        uint16_t eh_max;
+        uint16_t eh_depth;
+        uint32_t eh_generation;
+    };
+
+    struct ExtentIdx{
+        uint32_t ei_block;
+        uint32_t ei_leaf_lo;
+        uint16_t ei_leaf_hi;
+        uint16_t ei_unused;
+    };
+
+    struct Extent{
+        uint32_t ee_block;
+        uint16_t ee_len;
+        uint16_t ee_start_hi;
+        uint32_t ee_start_lo;
+    };
+
+    struct ExtentTail{
+        uint32_t eb_checksum;
+    };
+
+    struct DirEntry{
+        uint32_t inode;
+        uint16_t rec_len;
+        uint8_t name_len;
+        uint8_t file_type;
+        char name[EXT4_NAME_LEN];
+    };
+
+    struct DirEntryTail{
+        uint32_t det_reserved_zero1;
+        uint16_t det_rec_len;
+        uint8_t det_reserved_zero2;
+        uint8_t det_reserved_ft;
+        uint32_t det_checksum;
+    };
+
     class FileSystemManager
     {
     private:
         std::ifstream image_file;
         SuperBlock sb;
         std::vector<GroupDescriptor> group_descriptors;
+
+        std::vector<uint32_t> getDataBlocks(const Inode& inode);
+        Inode readInode(uint32_t num);
         
     public:
         bool setImage(std::string fileName);
         bool info();
         void testi(uint32_t inode);
-        void testb(uint32_t bloco);
+        void testb(uint32_t block);
+        void attr(std::string path);
+        void rmdir();
     };
 }
+
 #pragma pack(pop)
