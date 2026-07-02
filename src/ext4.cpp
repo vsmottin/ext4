@@ -131,7 +131,7 @@ string Ext4::SuperBlock::getMagic()
     case 0xEF53:
         return "0xEF53 (Ext4)";
     default:
-        return s_magic + " (Desconhecido)";
+        return to_string(s_magic) + " (Desconhecido)";
     }
 }
 
@@ -285,7 +285,15 @@ void Ext4::FileSystemManager::ls()
 {
     uint32_t block_size = this->sb.getBlockSize();
     uint32_t data_block = this->getInodeDataBlock(this->current_inode);
-    uint32_t block_in_disk = data_block * block_size;
+
+    if (data_block == 0)
+    {
+        cout << vermelho << "Erro: diretório atual não possui bloco de dados válido." << reset << endl;
+        return;
+    }
+
+    uint64_t block_in_disk = static_cast<uint64_t>(data_block) * block_size;
+    this->image_file.clear();
     this->image_file.seekg(block_in_disk);
     uint16_t bytes_read = 0;
     DirEntry dir_entry;
@@ -297,12 +305,12 @@ void Ext4::FileSystemManager::ls()
         this->image_file.read(reinterpret_cast<char *>(&dir_entry.name_len), sizeof(uint8_t));
         this->image_file.read(reinterpret_cast<char *>(&dir_entry.file_type), sizeof(uint8_t));
 
-        if (dir_entry.rec_len == 0)
+        if (dir_entry.rec_len < 8 || bytes_read + dir_entry.rec_len > block_size)
         {
             break;
         }
 
-        if (dir_entry.inode != 0 && dir_entry.name_len > 0)
+        if (dir_entry.inode != 0 && dir_entry.name_len > 0 && dir_entry.name_len <= (dir_entry.rec_len - 8))
         {
             string name(dir_entry.name_len, '\0');
             this->image_file.read(&name[0], dir_entry.name_len);
@@ -320,29 +328,30 @@ uint64_t Ext4::FileSystemManager::getInodeOffset(uint32_t inode_num)
     uint32_t block_size = this->sb.getBlockSize();
     uint32_t block_group = (inode_num - 1) / this->sb.getInodesPerGroup();
     uint32_t index = (inode_num - 1) % this->sb.getInodesPerGroup();
-    
+
     GroupDescriptor desc = this->group_descriptors[block_group];
     uint64_t inode_table_bytes = static_cast<uint64_t>(desc.bg_inode_table_lo) * block_size;
-    
+
     return inode_table_bytes + (index * this->sb.getInodeSize());
 }
 
 uint32_t Ext4::FileSystemManager::getInodeDataBlock(uint32_t inode_num)
 {
     uint64_t offset = this->getInodeOffset(inode_num);
+    this->image_file.clear();
     this->image_file.seekg(offset);
-    
+
     Inode inode;
     this->image_file.read(reinterpret_cast<char *>(&inode), sizeof(Inode));
-    
+
     ExtentHeader extent_header;
     memcpy(&extent_header, &inode.i_block[0], sizeof(ExtentHeader));
-    
-    Extent extent_leaf;
-    if (extent_header.eh_depth == 0)
+    if (extent_header.eh_magic != 0xF30A || extent_header.eh_depth != 0)
     {
-        memcpy(&extent_leaf, &inode.i_block[3], sizeof(Extent));
+        return 0;
     }
-    
+    Extent extent_leaf;
+    memcpy(&extent_leaf, &inode.i_block[3], sizeof(Extent));
+
     return extent_leaf.ee_start_lo;
 }
