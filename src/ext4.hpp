@@ -194,6 +194,8 @@ namespace Ext4
         SuperBlock sb;
         std::vector<GroupDescriptor> group_descriptors;
         uint32_t current_inode;
+        uint64_t getInodeOffset(uint32_t inode_num);
+        uint32_t getInodeDataBlock(uint32_t inode_num);
 
     public:
         bool setImage(std::string fileName);
