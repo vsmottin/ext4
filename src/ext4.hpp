@@ -1,10 +1,14 @@
 #include <stdint.h>
 #include <fstream>
 #include <vector>
+#include <string>
 // Definição das classes e variáveis
 
 #pragma once
 #pragma pack(push, 1)
+
+#define EXT4_NAME_LEN 255
+
 namespace Ext4
 {
     class SuperBlock
@@ -51,14 +55,14 @@ namespace Ext4
         uint8_t s_journal_uuid[16];        // 0xD0 - UUID do journal
         uint32_t s_journal_inum;           // 0xE0 - Número do inode do journal
 
-        uint32_t s_journal_dev;            // 0xE4 - Dispositivo do journal
-        uint32_t s_last_orphan;            // 0xE8 - Lista de inodes orfãos
-        uint32_t s_hash_seed[4];           // 0xEC - Seed do hash
-        uint8_t s_def_hash_version;        // 0xFC - Versão do hash padrão
-        uint8_t s_jnl_backup_type;         // 0xFD - Tipo de backup do journal
-        uint16_t s_desc_size;              // 0xFE - Tamanho do descritor
+        uint32_t s_journal_dev;     // 0xE4 - Dispositivo do journal
+        uint32_t s_last_orphan;     // 0xE8 - Lista de inodes orfãos
+        uint32_t s_hash_seed[4];    // 0xEC - Seed do hash
+        uint8_t s_def_hash_version; // 0xFC - Versão do hash padrão
+        uint8_t s_jnl_backup_type;  // 0xFD - Tipo de backup do journal
+        uint16_t s_desc_size;       // 0xFE - Tamanho do descritor
 
-        uint8_t padding[768];              // 0x100 - Preenchimento
+        uint8_t padding[768]; // 0x100 - Preenchimento
 
     public:
         std::string getVolumeName();
@@ -68,15 +72,17 @@ namespace Ext4
         std::string getCreatorOS();
         std::string getErrorBehavior();
         void superBlockStats();
-        
+
         uint32_t getBlockSize();
         uint32_t getBlockGroupsCount();
         uint32_t getInodesPerGroup();
         uint32_t getBlocksPerGroup();
         uint32_t getFirstDataBlock();
+        uint32_t getInodeSize();
     };
 
-    struct GroupDescriptor {
+    struct GroupDescriptor
+    {
         uint32_t bg_block_bitmap_lo;      // 0x00 - Bloco do bitmap de blocos
         uint32_t bg_inode_bitmap_lo;      // 0x04 - Bloco do bitmap de inodes
         uint32_t bg_inode_table_lo;       // 0x08 - Bloco do inode table
@@ -102,7 +108,8 @@ namespace Ext4
         uint32_t bg_reserved;             // 0x3C - Padding reservado
     };
 
-    struct Inode{
+    struct Inode
+    {
         uint16_t i_mode;         // 0x00 - Tipo e permissões do arquivo
         uint16_t i_uid;          // 0x02 - UID do proprietário
         uint32_t i_size_lo;      // 0x04 - Tamanho do arquivo (parte baixa)
@@ -132,18 +139,70 @@ namespace Ext4
         uint32_t i_projid;       // 0x9C - ID do projeto
     };
 
+    struct ExtentHeader
+    {
+        uint16_t eh_magic;
+        uint16_t eh_entries;
+        uint16_t eh_max;
+        uint16_t eh_depth;
+        uint32_t eh_generation;
+    };
+
+    struct ExtentIdx
+    {
+        uint32_t ei_block;
+        uint32_t ei_leaf_lo;
+        uint16_t ei_leaf_hi;
+        uint16_t ei_unused;
+    };
+
+    struct Extent
+    {
+        uint32_t ee_block;
+        uint16_t ee_len;
+        uint16_t ee_start_hi;
+        uint32_t ee_start_lo;
+    };
+
+    struct ExtentTail
+    {
+        uint32_t eb_checksum;
+    };
+
+    struct DirEntry
+    {
+        uint32_t inode;
+        uint16_t rec_len;
+        uint8_t name_len;
+        uint8_t file_type;
+        char name[EXT4_NAME_LEN];
+    };
+
+    struct DirEntryTail
+    {
+        uint32_t det_reserved_zero1;
+        uint16_t det_rec_len;
+        uint8_t det_reserved_zero2;
+        uint8_t det_reserved_ft;
+        uint32_t det_checksum;
+    };
+
     class FileSystemManager
     {
     private:
         std::ifstream image_file;
         SuperBlock sb;
         std::vector<GroupDescriptor> group_descriptors;
-        
+        uint32_t current_inode;
+        uint64_t getInodeOffset(uint32_t inode_num);
+        uint32_t getInodeDataBlock(uint32_t inode_num);
+
     public:
         bool setImage(std::string fileName);
         bool info();
         void testi(uint32_t inode);
         void testb(uint32_t bloco);
+        void ls();
     };
 }
 #pragma pack(pop)
