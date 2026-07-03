@@ -203,7 +203,7 @@ bool Ext4::FileSystemManager::setImage(string fileName)
     this->group_descriptors.resize(blockGroupsCount);
     file.read(reinterpret_cast<char *>(this->group_descriptors.data()), sizeof(GroupDescriptor) * blockGroupsCount);
     this->current_inode = 2;
-    this->currenth_path = "/";
+    this->current_path = "/";
     this->image_file = move(file);
     return true;
 }
@@ -365,25 +365,88 @@ uint32_t Ext4::FileSystemManager::getInodeDataBlock(uint32_t inode_num)
 
 void Ext4::FileSystemManager::pwd()
 {
-    cout << this->currenth_path << endl;
+    cout << this->current_path << endl;
 }
 
 // void Ext4::FileSystemManager::cd(string path)
 // {
-//     // atualizar o this->currenth_path ao abrir um path
+//     // atualizar o this->current_path ao abrir um path
 // }
 
 void Ext4::FileSystemManager::touch(string path)
 {
+    if (path.length() > 255)
+    {
+        cout << vermelho << "Erro: O nome do arquivo é longo demais! O limite do Ext4 é 255 caracteres." << reset << endl;
+        return;
+    }
     uint32_t block_size = this->sb.getBlockSize();
+
+    uint32_t data_block = getInodeDataBlock(this->current_inode);
+    uint64_t data_block_offset = (static_cast<uint64_t>(data_block) * block_size);
+
+    this->image_file.seekg(data_block_offset);
+    vector<char> data_block_bytes(block_size);
+    this->image_file.read(data_block_bytes.data(), block_size);
+
+    uint32_t current_offset = 0;
+    DirEntry *last_dir_entry = nullptr;
+    uint32_t last_offset = 0;
+
+    while (current_offset < block_size)
+    {
+        if (current_offset + 8 > block_size)
+        {
+            cout << vermelho << "Erro: Bloco de diretório corrompido (extrapolou o limite do bloco)." << reset << endl;
+            return;
+        }
+
+        DirEntry *attempt_dir_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[current_offset]);
+        if (attempt_dir_entry->rec_len < 12 || (attempt_dir_entry->rec_len % 4) != 0)
+        {
+            cout << vermelho << "Erro: Estrutura Ext4 inválida detectada (rec_len inválido: "
+                 << attempt_dir_entry->rec_len << ")." << reset << endl;
+            return;
+        }
+        if (current_offset + attempt_dir_entry->rec_len > block_size)
+        {
+            cout << vermelho << "Erro: Entrada de diretório aponta para fora do bloco ("
+                 << current_offset + attempt_dir_entry->rec_len << " > " << block_size << ")." << reset << endl;
+            return;
+        }
+        if (attempt_dir_entry->inode != 0)
+        {
+            last_dir_entry = attempt_dir_entry;
+            last_offset = current_offset;
+        }
+        current_offset += attempt_dir_entry->rec_len;
+    }
+
+    if (last_dir_entry == nullptr)
+    {
+        cout << vermelho << "Erro: Nenhum registro válido de diretório foi encontrado no bloco." << reset << endl;
+        return;
+    }
+
+    uint32_t new_rec_len = ((last_dir_entry->name_len + 8 + 3) / 4) * 4;
+    uint32_t space_left = last_dir_entry->rec_len - new_rec_len;
+    uint32_t new_file_required_size = ((path.length() + 8 + 3) / 4) * 4;
+
+    if (space_left < new_file_required_size)
+    {
+        cout << vermelho << "Erro: O diretório atual não tem espaço para este arquivo!" << reset << endl;
+        return;
+    }
     uint32_t group = (this->current_inode - 1) / this->sb.getInodesPerGroup();
     GroupDescriptor desc = this->group_descriptors[group];
     uint32_t inode_bitmap = desc.bg_inode_bitmap_lo;
     uint64_t inode_bitmap_offset = static_cast<uint64_t>(inode_bitmap) * block_size;
+
     this->image_file.clear();
     this->image_file.seekg(inode_bitmap_offset);
     vector<char> bytes(block_size);
     this->image_file.read(bytes.data(), block_size);
+
     uint32_t free_inode_index;
     bool found = false;
     for (uint32_t i = 0; i < block_size && !found; i++)
@@ -403,55 +466,45 @@ void Ext4::FileSystemManager::touch(string path)
             }
         }
     }
-    this->image_file.seekg(inode_bitmap_offset);
+
+    if (!found)
+    {
+        cout << vermelho << "Erro: o sistema de arquivos está cheio! Não há inodes livres" << reset << endl;
+        return;
+    }
+
+    this->image_file.seekp(inode_bitmap_offset);
     this->image_file.write(bytes.data(), block_size);
+
     uint32_t local_index_inode = (free_inode_index - 1) % this->sb.getInodesPerGroup();
     uint64_t inode_offset = (static_cast<uint64_t>(desc.bg_inode_table_lo) * block_size) +
                             static_cast<uint64_t>(local_index_inode) * this->sb.getInodeSize();
-    this->image_file.seekg(inode_offset);
+    this->image_file.seekp(inode_offset);
     Inode inode{};
     inode.i_mode = 0x81A4;
     inode.i_links_count = 1;
     this->image_file.write(reinterpret_cast<char *>(&inode), sizeof(Inode));
+
     uint32_t padding_size = this->sb.getInodeSize() - sizeof(Inode);
     if (padding_size > 0)
     {
         vector<char> padding(padding_size, 0);
         this->image_file.write(padding.data(), padding_size);
     }
-    uint32_t data_block = getInodeDataBlock(this->current_inode);
-    uint64_t data_block_offset = (static_cast<uint64_t>(data_block) * block_size);
-    this->image_file.seekg(data_block_offset);
-    vector<char> data_block_bytes(block_size);
-    this->image_file.read(data_block_bytes.data(), block_size);
-    uint32_t current_offset = 0;
-    DirEntry *last_dir_entry = nullptr;
-    uint32_t last_offset = 0;
-    while (current_offset < block_size)
+    last_dir_entry->rec_len = new_rec_len;
+    uint32_t new_entry_offset = last_offset + new_rec_len;
+    DirEntry *new_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[new_entry_offset]);
+    new_entry->inode = free_inode_index;
+    new_entry->name_len = path.length();
+    new_entry->file_type = 1;
+    new_entry->rec_len = space_left;
+    uint32_t padding_bytes_to_clear = new_file_required_size - 8 - path.length();
+    if (padding_bytes_to_clear > 0)
     {
-        DirEntry *attempt_dir_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[current_offset]);
-        if (attempt_dir_entry->inode != 0)
-        {
-            last_dir_entry = attempt_dir_entry;
-            last_offset = current_offset;
-        }
-        current_offset += attempt_dir_entry->rec_len;
+        memset(new_entry->name + path.length(), 0, padding_bytes_to_clear);
     }
-    uint32_t new_rec_len = ((last_dir_entry->name_len + 8 + 3) / 4) * 4;
-    uint32_t space_left = last_dir_entry->rec_len - new_rec_len;
-    uint32_t new_file_required_size = ((path.length() + 8 + 3) / 4) * 4;
-    if (space_left >= new_file_required_size)
-    {
-        last_dir_entry->rec_len = new_rec_len;
-        uint32_t new_entry_offset = last_offset + new_rec_len;
-        DirEntry *new_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[new_entry_offset]);
-        new_entry->inode = free_inode_index;
-        new_entry->name_len = path.length();
-        new_entry->file_type = 1;
-        new_entry->rec_len = space_left;
-        memset(new_entry->name, 0, new_file_required_size - 8);
-        memcpy(new_entry->name, path.c_str(), path.length());
-        this->image_file.seekg(data_block_offset);
-        this->image_file.write(data_block_bytes.data(), block_size);
-    }
+    memcpy(new_entry->name, path.c_str(), path.length());
+
+    this->image_file.seekp(data_block_offset);
+    this->image_file.write(data_block_bytes.data(), block_size);
 }

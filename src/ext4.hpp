@@ -195,7 +195,7 @@ namespace Ext4
         SuperBlock sb;
         std::vector<GroupDescriptor> group_descriptors;
         uint32_t current_inode;
-        std::string currenth_path;
+        std::string current_path;
         uint64_t getInodeOffset(uint32_t inode_num);
         uint32_t getInodeDataBlock(uint32_t inode_num);
 

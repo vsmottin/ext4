@@ -35,7 +35,8 @@ int main()
         {
             fs.pwd();
         }
-        else if (comand == "touch"){
+        else if (comand == "touch")
+        {
             string path;
             getline(cin >> ws, path);
             if (path.length() == 0)
