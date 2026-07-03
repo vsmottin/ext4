@@ -55,14 +55,14 @@ namespace Ext4
         uint8_t s_journal_uuid[16];        // 0xD0 - UUID do journal
         uint32_t s_journal_inum;           // 0xE0 - Número do inode do journal
 
-        uint32_t s_journal_dev;            // 0xE4 - Dispositivo do journal
-        uint32_t s_last_orphan;            // 0xE8 - Lista de inodes orfãos
-        uint32_t s_hash_seed[4];           // 0xEC - Seed do hash
-        uint8_t s_def_hash_version;        // 0xFC - Versão do hash padrão
-        uint8_t s_jnl_backup_type;         // 0xFD - Tipo de backup do journal
-        uint16_t s_desc_size;              // 0xFE - Tamanho do descritor
+        uint32_t s_journal_dev;     // 0xE4 - Dispositivo do journal
+        uint32_t s_last_orphan;     // 0xE8 - Lista de inodes orfãos
+        uint32_t s_hash_seed[4];    // 0xEC - Seed do hash
+        uint8_t s_def_hash_version; // 0xFC - Versão do hash padrão
+        uint8_t s_jnl_backup_type;  // 0xFD - Tipo de backup do journal
+        uint16_t s_desc_size;       // 0xFE - Tamanho do descritor
 
-        uint8_t padding[768];              // 0x100 - Preenchimento
+        uint8_t padding[768]; // 0x100 - Preenchimento
 
     public:
         std::string getVolumeName();
@@ -72,7 +72,7 @@ namespace Ext4
         std::string getCreatorOS();
         std::string getErrorBehavior();
         void superBlockStats();
-        
+
         uint32_t getBlockSize();
         uint32_t getBlockGroupsCount();
         uint32_t getInodesPerGroup();
@@ -81,7 +81,8 @@ namespace Ext4
         uint32_t getInodeSize();
     };
 
-    struct GroupDescriptor {
+    struct GroupDescriptor
+    {
         uint32_t bg_block_bitmap_lo;      // 0x00 - Bloco do bitmap de blocos
         uint32_t bg_inode_bitmap_lo;      // 0x04 - Bloco do bitmap de inodes
         uint32_t bg_inode_table_lo;       // 0x08 - Bloco do inode table
@@ -107,7 +108,8 @@ namespace Ext4
         uint32_t bg_reserved;             // 0x3C - Padding reservado
     };
 
-    struct Inode{
+    struct Inode
+    {
         uint16_t i_mode;         // 0x00 - Tipo e permissões do arquivo
         uint16_t i_uid;          // 0x02 - UID do proprietário
         uint32_t i_size_lo;      // 0x04 - Tamanho do arquivo (parte baixa)
@@ -185,10 +187,13 @@ namespace Ext4
         std::ifstream image_file;
         SuperBlock sb;
         std::vector<GroupDescriptor> group_descriptors;
+        uint32_t current_inode;
 
         std::vector<uint32_t> getDataBlocks(const Inode& inode);
         Inode readInode(uint32_t num);
-        
+        uint64_t getInodeOffset(uint32_t inode_num);
+        uint32_t getInodeDataBlock(uint32_t inode_num);
+
     public:
         bool setImage(std::string fileName);
         bool info();
@@ -196,6 +201,7 @@ namespace Ext4
         void testb(uint32_t block);
         void attr(std::string path);
         void rmdir();
+        void ls();
     };
 }
 

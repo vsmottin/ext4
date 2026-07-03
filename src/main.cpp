@@ -21,12 +21,16 @@ int main()
     string comand;
     while (true)
     {
-        cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << "]" << reset << "$ ";
+        cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << "/]" << reset << "$ ";
         cin >> comand;
         comand = trim(comand);
         if (comand == "info")
         {
             fs.info();
+        }
+        else if (comand == "ls")
+        {
+            fs.ls();
         }
         else if (comand == "exit")
         {
