@@ -17,7 +17,6 @@ int main()
         img_chosen = fs.setImage(trim(fileName));
     }
     fileName = trim(fileName);
-
     string comand;
     while (true)
     {
@@ -31,6 +30,20 @@ int main()
         else if (comand == "ls")
         {
             fs.ls();
+        }
+        else if (comand == "pwd")
+        {
+            fs.pwd();
+        }
+        else if (comand == "touch"){
+            string path;
+            getline(cin >> ws, path);
+            if (path.length() == 0)
+            {
+                cout << vermelho << "Caminho invalido" << reset << endl;
+                continue;
+            }
+            fs.touch(path);
         }
         else if (comand == "exit")
         {
