@@ -137,6 +137,8 @@ namespace Ext4
         uint32_t i_crtime_extra; // 0x94 - Tempo extra de criação do inode
         uint32_t i_version_hi;   // 0x98 - Versão do inode
         uint32_t i_projid;       // 0x9C - ID do projeto
+
+        std::string getFileType();
     };
 
     struct ExtentHeader{
@@ -191,6 +193,7 @@ namespace Ext4
 
         std::vector<uint32_t> getDataBlocks(const Inode& inode);
         Inode readInode(uint32_t num);
+        Inode resolveNameToInode(const std::string& path);
         uint64_t getInodeOffset(uint32_t inode_num);
         uint32_t getInodeDataBlock(uint32_t inode_num);
 

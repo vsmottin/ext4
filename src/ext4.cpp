@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <ctime>
 
 using namespace std;
 
@@ -139,28 +140,90 @@ uint32_t Ext4::SuperBlock::getInodeSize(){
     return this-> s_inode_size;
 }
 
+string Ext4::Inode::getFileType(){
+    switch (this-> i_mode & 0xF000){
+        case 0x1000:
+            return "FIFO";
+        case 0x2000:
+            return "Dispositivo de caractere";
+        case 0x4000:
+            return "Diretório";
+        case 0x6000:
+            return "Dispositivo de bloco";
+        case 0x8000:
+            return "Arquivo regular";
+        case 0xA000:
+            return "Link simbólico";
+        case 0xC000:
+            return "Socket";
+        default:
+            return "Desconhecido";
+    }
+}
+
 Inode Ext4::FileSystemManager::readInode(uint32_t inode){
     if (inode == 0 || inode > this-> sb.getBlockGroupsCount() * this-> sb.getInodesPerGroup()) {
         cout << vermelho << "Erro: Inode fora dos limites." << reset << endl;
         return Inode{};
     }
 
-    uint32_t inodesPerGroup = this-> sb.getInodesPerGroup();
-    uint32_t blockGroup = (inode - 1) / inodesPerGroup;
-    uint32_t localIndex = (inode - 1) % inodesPerGroup;
+    uint32_t inodes_per_group = this-> sb.getInodesPerGroup();
+    uint32_t block_group = (inode - 1) / inodesPerGroup;
+    uint32_t local_index = (inode - 1) % inodesPerGroup;
 
-    GroupDescriptor desc = this-> group_descriptors[blockGroup];
-    uint32_t inodeTableBlock = desc.bg_inode_table_lo;
-    uint32_t blockSize = this-> sb.getBlockSize();
-    uint32_t inodeSize = this-> sb.getInodeSize();
-    uint64_t tableOffset = static_cast<uint64_t>(inodeTableBlock) * blockSize + localIndex * inodeSize;
+    GroupDescriptor desc = this-> group_descriptors[block_group];
+    uint32_t inode_table_block = desc.bg_inode_table_lo;
+    uint32_t block_size = this-> sb.getBlockSize();
+    uint32_t inode_size = this-> sb.getInodeSize();
+    uint64_t table_offset = static_cast<uint64_t>(inode_table_block) * block_size + local_index * inode_size;
 
     Inode node{};
-    this-> image_file.clear(); 
-    this-> image_file.seekg(tableOffset);
+    this-> image_file.clear();
+    this-> image_file.seekg(table_offset);
     this-> image_file.read(reinterpret_cast<char*>(&node), sizeof(Inode));
 
     return node;
+}
+
+Inode Ext4::FileSystemManager::resolveNameToInode(const string& path){
+    uint32_t block_size = this-> sb.getBlockSize();
+    uint32_t dataBlock = this-> getInodeDataBlock(this-> current_inode);
+    
+    if (dataBlock == 0){
+        cout << vermelho << "Erro: diretório atual não possui bloco de dados válido." << reset << endl;
+        return Inode{};
+    }
+
+    uint64_t blockInDisk = static_cast<uint64_t>(dataBlock) * block_size;
+    this-> image_file.clear();
+
+    uint16_t bytesRead = 0;
+    DirEntry dirEntry;
+    
+    while (bytesRead < block_size){
+        this-> image_file.seekg(blockInDisk + bytesRead);
+        this-> image_file.read(reinterpret_cast<char *>(&dirEntry.inode), sizeof(uint32_t));
+        this-> image_file.read(reinterpret_cast<char *>(&dirEntry.rec_len), sizeof(uint16_t));
+        this-> image_file.read(reinterpret_cast<char *>(&dirEntry.name_len), sizeof(uint8_t));
+        this-> image_file.read(reinterpret_cast<char *>(&dirEntry.file_type), sizeof(uint8_t));
+
+        if (dirEntry.rec_len < 8 || bytesRead + dirEntry.rec_len > block_size){
+            break;
+        }
+
+        if (dirEntry.inode != 0 && dirEntry.name_len > 0 && dirEntry.name_len <= (dirEntry.rec_len - 8)){
+            string name(dirEntry.name_len, '\0');
+            this-> image_file.read(&name[0], dirEntry.name_len);
+
+            if (name == path){
+                return this-> readInode(dirEntry.inode);
+            }
+        }
+
+        bytesRead += dirEntry.rec_len;
+    }
+
+    return Inode{};
 }
 
 void Ext4::SuperBlock::superBlockStats()
@@ -209,16 +272,16 @@ bool Ext4::FileSystemManager::setImage(string fileName)
     file.seekg(1024);
     file.read(reinterpret_cast<char *>(&this->sb), sizeof(SuperBlock));
 
-    uint32_t blockSize = this->sb.getBlockSize();
+    uint32_t block_size = this->sb.getBlockSize();
 
     // block group descriptor table.
-    uint32_t bgdtStartBlock = (blockSize == 1024) ? 2 : 1;
+    uint32_t bgdtStartBlock = (block_size == 1024) ? 2 : 1;
 
-    uint64_t bgdtOffset = bgdtStartBlock * blockSize;
+    uint64_t bgdtOffset = bgdtStartBlock * block_size;
     file.seekg(bgdtOffset);
-    uint32_t blockGroupsCount = this->sb.getBlockGroupsCount();
-    this->group_descriptors.resize(blockGroupsCount);
-    file.read(reinterpret_cast<char *>(this->group_descriptors.data()), sizeof(GroupDescriptor) * blockGroupsCount);
+    uint32_t block_groupsCount = this->sb.getBlockGroupsCount();
+    this->group_descriptors.resize(block_groupsCount);
+    file.read(reinterpret_cast<char *>(this->group_descriptors.data()), sizeof(GroupDescriptor) * block_groupsCount);
     this->current_inode = 2;
     this->image_file = move(file);
     return true;
@@ -230,38 +293,33 @@ bool Ext4::FileSystemManager::info()
     return true;
 }
 
-void Ext4::FileSystemManager::testi(uint32_t inode)
-{
-    if (inode == 0 || inode > this->sb.getBlockGroupsCount() * this->sb.getInodesPerGroup())
-    {
+void Ext4::FileSystemManager::testi(uint32_t inode){
+    if (inode == 0 || inode > this-> sb.getBlockGroupsCount() * this-> sb.getInodesPerGroup()){
         cout << vermelho << "Erro: Inode fora dos limites." << reset << endl;
         return;
     }
 
-    uint32_t inodesPerGroup = this->sb.getInodesPerGroup();
-    uint32_t blockGroup = (inode - 1) / inodesPerGroup;
-    uint32_t localIndex = (inode - 1) % inodesPerGroup;
+    uint32_t inodesPerGroup = this-> sb.getInodesPerGroup();
+    uint32_t block_group = (inode - 1) / inodesPerGroup;
+    uint32_t local_index = (inode - 1) % inodesPerGroup;
 
-    GroupDescriptor desc = this->group_descriptors[blockGroup];
+    GroupDescriptor desc = this-> group_descriptors[block_group];
     uint32_t bitmapBlock = desc.bg_inode_bitmap_lo;
-    uint32_t blockSize = this->sb.getBlockSize();
-    uint64_t bitmapOffset = static_cast<uint64_t>(bitmapBlock) * blockSize;
-    uint32_t byteOffset = localIndex / 8;
-    uint32_t bitOffset = localIndex % 8;
+    uint32_t block_size = this-> sb.getBlockSize();
+    uint64_t bitmapOffset = static_cast<uint64_t>(bitmapBlock) * block_size;
+    uint32_t byteOffset = local_index / 8;
+    uint32_t bitOffset = local_index % 8;
 
-    this->image_file.clear();
-    this->image_file.seekg(bitmapOffset + byteOffset);
+    this-> image_file.clear();
+    this-> image_file.seekg(bitmapOffset + byteOffset);
 
     uint8_t byte;
-    this->image_file.read(reinterpret_cast<char *>(&byte), 1);
+    this-> image_file.read(reinterpret_cast<char *>(&byte), 1);
 
     bool isUsed = (byte & (1 << bitOffset)) != 0;
-    if (isUsed)
-    {
+    if (isUsed){
         cout << "Inode " << inode << " está " << vermelho << "OCUPADO" << reset << endl;
-    }
-    else
-    {
+    } else {
         cout << "Inode " << inode << " está " << verde << "LIVRE" << reset << endl;
     }
 }
@@ -272,24 +330,24 @@ void Ext4::FileSystemManager::testb(uint32_t block){
         return;
     }
 
-    uint32_t firstDataBlock = this->sb.getFirstDataBlock();
-    uint32_t blocksPerGroup = this->sb.getBlocksPerGroup();
+    uint32_t firstDataBlock = this-> sb.getFirstDataBlock();
+    uint32_t blocksPerGroup = this-> sb.getBlocksPerGroup();
 
-    uint32_t blockGroup = (block - firstDataBlock) / blocksPerGroup;
-    uint32_t localIndex = (block - firstDataBlock) % blocksPerGroup;
+    uint32_t block_group = (block - firstDataBlock) / blocksPerGroup;
+    uint32_t local_index = (block - firstDataBlock) % blocksPerGroup;
     
-    GroupDescriptor desc = this-> group_descriptors[blockGroup];
+    GroupDescriptor desc = this-> group_descriptors[block_group];
     uint32_t bitmapBlock = desc.bg_block_bitmap_lo;
-    uint32_t blockSize = this->sb.getBlockSize();
-    uint64_t bitmapOffset = static_cast<uint64_t>(bitmapBlock) * blockSize;
-    uint32_t byteOffset = localIndex / 8;
-    uint32_t bitOffset = localIndex % 8;
+    uint32_t block_size = this-> sb.getBlockSize();
+    uint64_t bitmapOffset = static_cast<uint64_t>(bitmapBlock) * block_size;
+    uint32_t byteOffset = local_index / 8;
+    uint32_t bitOffset = local_index % 8;
 
-    this->image_file.clear();
-    this->image_file.seekg(bitmapOffset + byteOffset);
+    this-> image_file.clear();
+    this-> image_file.seekg(bitmapOffset + byteOffset);
 
     uint8_t byte;
-    this->image_file.read(reinterpret_cast<char *>(&byte), 1);
+    this-> image_file.read(reinterpret_cast<char *>(&byte), 1);
 
     bool isUsed = (byte & (1 << bitOffset)) != 0;
     if (isUsed) {
@@ -372,4 +430,41 @@ uint32_t Ext4::FileSystemManager::getInodeDataBlock(uint32_t inode_num)
     memcpy(&extent_leaf, &inode.i_block[3], sizeof(Extent));
 
     return extent_leaf.ee_start_lo;
+}
+
+void Ext4::FileSystemManager::attr(string path){
+    Inode inode = this-> resolveNameToInode(path);
+
+    if (inode.i_mode == 0){
+        cout << vermelho << "attr: '" << path << "' não encontrado no diretório atual" << reset << endl;
+        return;
+    }
+
+    const char letters[3] = {'r', 'w', 'x'};
+    string permissions;
+    for (int i = 8; i >= 0; i--){
+        bool on = (inode.i_mode & (1 << i)) != 0;
+        permissions += on ? letters[2 - (i % 3)] : '-';
+    }
+
+    uint64_t size = (static_cast<uint64_t>(inode.i_size_high) << 32) | inode.i_size_lo;
+
+    time_t t_access = inode.i_atime;
+    time_t t_modif = inode.i_mtime;
+    time_t t_meta = inode.i_ctime;
+    time_t t_create = inode.i_crtime;
+
+    cout << endl;
+    cout << ciano negrito << "Atributos de " << path << reset << endl;
+    cout << "Tipo:              " << inode.getFileType() << endl;
+    cout << "Permissões:        " << permissions << "  (" << oct << (inode.i_mode & 0x1FF) << dec << ")" << endl;
+    cout << "Tamanho:           " << size << " bytes" << endl;
+    cout << "Dono (UID):        " << inode.i_uid << endl;
+    cout << "Grupo (GID):       " << inode.i_gid << endl;
+    cout << "Links:             " << inode.i_links_count << endl;
+    cout << "Blocos (512B):     " << inode.i_blocks_lo << endl;
+    cout << "Ultimo acesso:     " << ctime(&t_access);
+    cout << "Modificação:       " << ctime(&t_modif);
+    cout << "Alteração (meta):  " << ctime(&t_meta);
+    cout << "Criação:           " << ctime(&t_create);
 }
