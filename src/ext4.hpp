@@ -198,7 +198,12 @@ namespace Ext4
         std::string current_path;
         uint64_t getInodeOffset(uint32_t inode_num);
         uint32_t getInodeDataBlock(uint32_t inode_num);
-
+        Inode readInode(uint32_t inode_num);
+        std::vector<uint32_t> getInodeDataBlocks(uint32_t inode_num);
+        void collectExtentBlocks(uint32_t block_num, std::vector<uint32_t>& blocks);
+        uint32_t findInodeInDirectory(uint32_t dir_inode, const std::string& name);
+        bool isDirectory(const Inode& inode);
+        
     public:
         bool setImage(std::string fileName);
         bool info();
@@ -206,8 +211,9 @@ namespace Ext4
         void testb(uint32_t bloco);
         void ls();
         void pwd();
-        //void cd(std::string path);
+        void cd(std::string path);
         void touch(std::string path);
+        std::string getCurrentPath();
     };
 }
 #pragma pack(pop)

@@ -368,10 +368,209 @@ void Ext4::FileSystemManager::pwd()
     cout << this->current_path << endl;
 }
 
-// void Ext4::FileSystemManager::cd(string path)
-// {
-//     // atualizar o this->current_path ao abrir um path
-// }
+Ext4::Inode Ext4::FileSystemManager::readInode(uint32_t inode_num)
+{
+    Inode inode{};
+    uint64_t offset = this->getInodeOffset(inode_num);
+    this->image_file.clear();
+    this->image_file.seekg(offset);
+    this->image_file.read(reinterpret_cast<char *>(&inode), sizeof(Inode));
+    return inode;
+}
+
+bool Ext4::FileSystemManager::isDirectory(const Inode& inode)
+{
+    return (inode.i_mode & 0xF000) == 0x4000;
+}
+
+void Ext4::FileSystemManager::collectExtentBlocks(uint32_t block_num, std::vector<uint32_t>& blocks)
+{
+    ExtentHeader header;
+    uint32_t block_size = this->sb.getBlockSize();
+
+    this->image_file.clear();
+    this->image_file.seekg(static_cast<uint64_t>(block_num) * block_size);
+    this->image_file.read(reinterpret_cast<char *>(&header), sizeof(ExtentHeader));
+
+    if (header.eh_magic != 0xF30A)
+        return;
+
+    if (header.eh_depth == 0)
+    {
+        for (int i = 0; i < header.eh_entries; i++)
+        {
+            Extent extent;
+            this->image_file.read(reinterpret_cast<char *>(&extent), sizeof(Extent));
+            for (uint16_t j = 0; j < extent.ee_len; j++)
+                blocks.push_back(extent.ee_start_lo + j);
+        }
+    }
+    else
+    {
+        for (int i = 0; i < header.eh_entries; i++)
+        {
+            ExtentIdx idx;
+            this->image_file.read(reinterpret_cast<char *>(&idx), sizeof(ExtentIdx));
+            this->collectExtentBlocks(idx.ei_leaf_lo, blocks);
+        }
+    }
+}
+
+std::vector<uint32_t> Ext4::FileSystemManager::getInodeDataBlocks(uint32_t inode_num)
+{
+    std::vector<uint32_t> blocks;
+    Inode inode = this->readInode(inode_num);
+
+    ExtentHeader header;
+    memcpy(&header, &inode.i_block[0], sizeof(ExtentHeader));
+    if (header.eh_magic != 0xF30A)
+        return blocks;
+
+    if (header.eh_depth == 0)
+    {
+        for (int i = 0; i < header.eh_entries; i++)
+        {
+            Extent extent;
+            memcpy(&extent, &inode.i_block[3 + i * 3], sizeof(Extent));
+            for (uint16_t j = 0; j < extent.ee_len; j++)
+                blocks.push_back(extent.ee_start_lo + j);
+        }
+    }
+    else
+    {
+        for (int i = 0; i < header.eh_entries; i++)
+        {
+            ExtentIdx idx;
+            memcpy(&idx, &inode.i_block[3 + i * 3], sizeof(ExtentIdx));
+            this->collectExtentBlocks(idx.ei_leaf_lo, blocks);
+        }
+    }
+
+    return blocks;
+}
+
+uint32_t Ext4::FileSystemManager::findInodeInDirectory(uint32_t dir_inode, const std::string &name)
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    std::vector<uint32_t> blocks = this->getInodeDataBlocks(dir_inode);
+
+    for (uint32_t block : blocks)
+    {
+        std::vector<char> buffer(block_size);
+        this->image_file.clear();
+        this->image_file.seekg(static_cast<uint64_t>(block) * block_size);
+        this->image_file.read(buffer.data(), block_size);
+
+        uint32_t pos = 0;
+        while (pos + 8 <= block_size)
+        {
+            DirEntry *entry = reinterpret_cast<DirEntry *>(&buffer[pos]);
+            if (entry->rec_len < 8 || pos + entry->rec_len > block_size)
+                break;
+
+            if (entry->inode != 0 &&
+                entry->name_len == name.length() &&
+                strncmp(entry->name, name.c_str(), entry->name_len) == 0)
+            {
+                return entry->inode;
+            }
+
+            pos += entry->rec_len;
+        }
+    }
+
+    return 0;
+}
+
+static std::vector<std::string> tokenizePath(const std::string &path)
+{
+    std::vector<std::string> tokens;
+    std::string component;
+    for (size_t i = 0; i <= path.size(); i++)
+    {
+        if (i == path.size() || path[i] == '/')
+        {
+            if (!component.empty() && component != ".")
+                tokens.push_back(component);
+            component.clear();
+        }
+        else
+        {
+            component += path[i];
+        }
+    }
+    return tokens;
+}
+
+void Ext4::FileSystemManager::cd(std::string path)
+{
+    if (path.empty())
+        return;
+
+    uint32_t root_inode;
+    std::vector<std::string> path_stack;
+
+    if (path[0] == '/')
+    {
+        root_inode = 2;
+    }
+    else
+    {
+        root_inode = this->current_inode;
+        path_stack = tokenizePath(this->current_path);
+    }
+
+    std::vector<std::string> components = tokenizePath(path);
+
+    for (const std::string &component : components)
+    {
+        if (component == "..")
+        {
+            uint32_t parent_inode = this->findInodeInDirectory(root_inode, "..");
+            if (parent_inode == 0)
+            {
+                cout << vermelho << "Erro: não foi possível localizar o diretório pai." << reset << endl;
+                return;
+            }
+            root_inode = parent_inode;
+            if (!path_stack.empty())
+                path_stack.pop_back();
+        }
+        else
+        {
+            uint32_t found_inode = this->findInodeInDirectory(root_inode, component);
+            if (found_inode == 0)
+            {
+                cout << vermelho << "Erro: \"" << component << "\" não existe." << reset << endl;
+                return;
+            }
+
+            Inode inode = this->readInode(found_inode);
+            if (!this->isDirectory(inode))
+            {
+                cout << vermelho << "Erro: \"" << component << "\" não é um diretório." << reset << endl;
+                return;
+            }
+
+            root_inode = found_inode;
+            path_stack.push_back(component);
+        }
+    }
+
+    this->current_inode = root_inode;
+    this->current_path = "/";
+    for (size_t i = 0; i < path_stack.size(); i++)
+    {
+        this->current_path += path_stack[i];
+        if (i + 1 < path_stack.size())
+            this->current_path += "/";
+    }
+}
+
+string Ext4::FileSystemManager::getCurrentPath()
+{
+    return this->current_path;
+}
 
 void Ext4::FileSystemManager::touch(string path)
 {

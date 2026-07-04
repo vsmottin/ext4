@@ -20,7 +20,7 @@ int main()
     string comand;
     while (true)
     {
-        cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << "/]" << reset << "$ ";
+        cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << fs.getCurrentPath() << "]" << reset << "$ ";
         cin >> comand;
         comand = trim(comand);
         if (comand == "info")
@@ -45,6 +45,12 @@ int main()
                 continue;
             }
             fs.touch(path);
+        }
+        else if (comand == "cd")
+        {
+            string path;
+            cin >> path;
+            fs.cd(path);
         }
         else if (comand == "exit")
         {
