@@ -20,7 +20,7 @@ int main()
     string comand;
     while (true)
     {
-        cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << "/]" << reset << "$ ";
+        cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << fs.getCurrentPath() << "]" << reset << "$ ";
         cin >> comand;
         comand = trim(comand);
         if (comand == "info")

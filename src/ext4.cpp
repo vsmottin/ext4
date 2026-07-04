@@ -383,11 +383,6 @@ bool Ext4::FileSystemManager::isDirectory(const Inode& inode)
     return (inode.i_mode & 0xF000) == 0x4000;
 }
 
-void Ext4::FileSystemManager::cd(string path)
-{
-    // atualizar o this->current_path ao abrir um path
-}
-
 void Ext4::FileSystemManager::collectExtentBlocks(uint32_t block_num, std::vector<uint32_t>& blocks)
 {
     ExtentHeader header;
@@ -570,6 +565,11 @@ void Ext4::FileSystemManager::cd(std::string path)
         if (i + 1 < path_stack.size())
             this->current_path += "/";
     }
+}
+
+string Ext4::FileSystemManager::getCurrentPath()
+{
+    return this->current_path;
 }
 
 void Ext4::FileSystemManager::touch(string path)

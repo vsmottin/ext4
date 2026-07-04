@@ -213,6 +213,7 @@ namespace Ext4
         void pwd();
         void cd(std::string path);
         void touch(std::string path);
+        std::string getCurrentPath();
     };
 }
 #pragma pack(pop)
