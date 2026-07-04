@@ -46,6 +46,12 @@ int main()
             }
             fs.touch(path);
         }
+        else if (comand == "cd")
+        {
+            string path;
+            cin >> path;
+            fs.cd(path);
+        }
         else if (comand == "exit")
         {
             break;
