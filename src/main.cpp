@@ -52,6 +52,17 @@ int main()
             cin >> path;
             fs.cd(path);
         }
+        else if (comand == "mkdir")
+        {
+            string name;
+            getline(cin >> ws, name);
+            if (name.empty())
+                {
+                    cout << vermelho << "Nome inválido" << reset << endl;
+                    continue;
+                }
+            fs.mkdir(name);
+        }
         else if (comand == "exit")
         {
             break;

@@ -707,3 +707,229 @@ void Ext4::FileSystemManager::touch(string path)
     this->image_file.seekp(data_block_offset);
     this->image_file.write(data_block_bytes.data(), block_size);
 }
+
+uint32_t Ext4::FileSystemManager::allocateFreeInode(uint32_t group)
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    GroupDescriptor &desc = this->group_descriptors[group];
+    uint64_t bitmap_offset = static_cast<uint64_t>(desc.bg_inode_bitmap_lo) * block_size;
+
+    vector<char> bitmap(block_size);
+    this->image_file.clear();
+    this->image_file.seekg(bitmap_offset);
+    this->image_file.read(bitmap.data(), block_size);
+
+    uint32_t inodes_per_group = this->sb.getInodesPerGroup();
+    for (uint32_t i = 0; i < inodes_per_group; i++)
+    {
+        uint32_t byte_index = i / 8;
+        uint8_t bit_index = i % 8;
+
+        if ((bitmap[byte_index] & (1 << bit_index)) == 0)
+        {
+            uint32_t inode_number = group * inodes_per_group + i + 1;
+            if (inode_number < this->sb.getFirstFreeInode())
+                continue;
+
+            bitmap[byte_index] |= (1 << bit_index);
+            this->image_file.clear();
+            this->image_file.seekp(bitmap_offset);
+            this->image_file.write(bitmap.data(), block_size);
+            return inode_number;
+        }
+    }
+    return 0;
+}
+
+uint32_t Ext4::FileSystemManager::allocateFreeBlock(uint32_t preferred_group)
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    uint32_t blocks_per_group = this->sb.getBlocksPerGroup();
+    uint32_t first_data_block = this->sb.getFirstDataBlock();
+    uint32_t group_count = this->sb.getBlockGroupsCount();
+
+    for (uint32_t g = 0; g < group_count; g++)
+    {
+        uint32_t group = (preferred_group + g) % group_count;
+        GroupDescriptor &desc = this->group_descriptors[group];
+        uint64_t bitmap_offset = static_cast<uint64_t>(desc.bg_block_bitmap_lo) * block_size;
+
+        vector<char> bitmap(block_size);
+        this->image_file.clear();
+        this->image_file.seekg(bitmap_offset);
+        this->image_file.read(bitmap.data(), block_size);
+
+        for (uint32_t i = 0; i < blocks_per_group; i++)
+        {
+            uint32_t byte_index = i / 8;
+            uint8_t bit_index = i % 8;
+            if (byte_index >= block_size)
+                break;
+
+            if ((bitmap[byte_index] & (1 << bit_index)) == 0)
+            {
+                bitmap[byte_index] |= (1 << bit_index);
+                this->image_file.clear();
+                this->image_file.seekp(bitmap_offset);
+                this->image_file.write(bitmap.data(), block_size);
+                return first_data_block + group * blocks_per_group + i;
+            }
+        }
+    }
+    return 0;
+}
+
+void Ext4::FileSystemManager::mkdir(string name)
+{
+    if (name.empty() || name.length() > 255)
+    {
+        cout << vermelho << "Erro: nome de diretório inválido." << reset << endl;
+        return;
+    }
+
+    if (this->findInodeInDirectory(this->current_inode, name) != 0)
+    {
+        cout << vermelho << "Erro: já existe um arquivo ou diretório com esse nome." << reset << endl;
+        return;
+    }
+
+    uint32_t block_size = this->sb.getBlockSize();
+    uint32_t data_block = this->getInodeDataBlock(this->current_inode);
+    uint64_t data_block_offset = static_cast<uint64_t>(data_block) * block_size;
+
+    vector<char> data_block_bytes(block_size);
+    this->image_file.clear();
+    this->image_file.seekg(data_block_offset);
+    this->image_file.read(data_block_bytes.data(), block_size);
+
+    uint32_t current_offset = 0;
+    DirEntry *last_dir_entry = nullptr;
+    uint32_t last_offset = 0;
+
+    while (current_offset < block_size)
+    {
+        DirEntry *entry = reinterpret_cast<DirEntry *>(&data_block_bytes[current_offset]);
+        if (entry->rec_len < 12 || (entry->rec_len % 4) != 0 || current_offset + entry->rec_len > block_size)
+        {
+            cout << vermelho << "Erro: estrutura de diretório inválida." << reset << endl;
+            return;
+        }
+        if (entry->inode != 0)
+        {
+            last_dir_entry = entry;
+            last_offset = current_offset;
+        }
+        current_offset += entry->rec_len;
+    }
+
+    if (last_dir_entry == nullptr)
+    {
+        cout << vermelho << "Erro: diretório atual corrompido." << reset << endl;
+        return;
+    }
+
+    uint32_t used_rec_len = ((last_dir_entry->name_len + 8 + 3) / 4) * 4;
+    uint32_t space_left = last_dir_entry->rec_len - used_rec_len;
+    uint32_t required = ((name.length() + 8 + 3) / 4) * 4;
+
+    if (space_left < required)
+    {
+        cout << vermelho << "Erro: o diretório atual não tem espaço para essa entrada." << reset << endl;
+        return;
+    }
+
+    uint32_t group = (this->current_inode - 1) / this->sb.getInodesPerGroup();
+
+    uint32_t new_inode_num = this->allocateFreeInode(group);
+    if (new_inode_num == 0)
+    {
+        cout << vermelho << "Erro: sem inodes livres." << reset << endl;
+        return;
+    }
+
+    uint32_t new_block_num = this->allocateFreeBlock(group);
+    if (new_block_num == 0)
+    {
+        cout << vermelho << "Erro: sem blocos livres." << reset << endl;
+        return;
+    }
+
+    vector<char> new_dir_block(block_size, 0);
+
+    DirEntry *dot = reinterpret_cast<DirEntry *>(&new_dir_block[0]);
+    dot->inode = new_inode_num;
+    dot->rec_len = 12;
+    dot->name_len = 1;
+    dot->file_type = 2;
+    dot->name[0] = '.';
+
+    DirEntry *dotdot = reinterpret_cast<DirEntry *>(&new_dir_block[12]);
+    dotdot->inode = this->current_inode;
+    dotdot->rec_len = block_size - 12;
+    dotdot->name_len = 2;
+    dotdot->file_type = 2;
+    dotdot->name[0] = '.';
+    dotdot->name[1] = '.';
+
+    this->image_file.clear();
+    this->image_file.seekp(static_cast<uint64_t>(new_block_num) * block_size);
+    this->image_file.write(new_dir_block.data(), block_size);
+
+    Inode new_inode{};
+    new_inode.i_mode = 0x41ED;
+    new_inode.i_links_count = 2;
+    new_inode.i_size_lo = block_size;
+
+    ExtentHeader header{};
+    header.eh_magic = 0xF30A;
+    header.eh_entries = 1;
+    header.eh_max = 4;
+    header.eh_depth = 0;
+    memcpy(&new_inode.i_block[0], &header, sizeof(ExtentHeader));
+
+    Extent extent{};
+    extent.ee_block = 0;
+    extent.ee_len = 1;
+    extent.ee_start_hi = 0;
+    extent.ee_start_lo = new_block_num;
+    memcpy(&new_inode.i_block[3], &extent, sizeof(Extent));
+
+    uint32_t new_group = (new_inode_num - 1) / this->sb.getInodesPerGroup();
+    uint32_t local_index = (new_inode_num - 1) % this->sb.getInodesPerGroup();
+    uint64_t inode_offset = static_cast<uint64_t>(this->group_descriptors[new_group].bg_inode_table_lo) * block_size +
+                             static_cast<uint64_t>(local_index) * this->sb.getInodeSize();
+
+    this->image_file.clear();
+    this->image_file.seekp(inode_offset);
+    this->image_file.write(reinterpret_cast<char *>(&new_inode), sizeof(Inode));
+
+    uint32_t padding_size = this->sb.getInodeSize() - sizeof(Inode);
+    if (padding_size > 0)
+    {
+        vector<char> padding(padding_size, 0);
+        this->image_file.write(padding.data(), padding_size);
+    }
+
+    last_dir_entry->rec_len = used_rec_len;
+    uint32_t new_entry_offset = last_offset + used_rec_len;
+    DirEntry *new_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[new_entry_offset]);
+    new_entry->inode = new_inode_num;
+    new_entry->name_len = name.length();
+    new_entry->file_type = 2;
+    new_entry->rec_len = space_left;
+    memset(new_entry->name, 0, required - 8);
+    memcpy(new_entry->name, name.c_str(), name.length());
+
+    this->image_file.clear();
+    this->image_file.seekp(data_block_offset);
+    this->image_file.write(data_block_bytes.data(), block_size);
+
+    Inode parent_inode = this->readInode(this->current_inode);
+    parent_inode.i_links_count += 1;
+    uint64_t parent_offset = this->getInodeOffset(this->current_inode);
+    this->image_file.clear();
+    this->image_file.seekp(parent_offset);
+    this->image_file.write(reinterpret_cast<char *>(&parent_inode), sizeof(Inode));
+
+    cout << verde << "Diretório \"" << name << "\" criado com sucesso (inode " << new_inode_num << ")." << reset << endl;
+}

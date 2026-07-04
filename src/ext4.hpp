@@ -203,6 +203,8 @@ namespace Ext4
         void collectExtentBlocks(uint32_t block_num, std::vector<uint32_t>& blocks);
         uint32_t findInodeInDirectory(uint32_t dir_inode, const std::string& name);
         bool isDirectory(const Inode& inode);
+        uint32_t allocateFreeInode(uint32_t group);
+        uint32_t allocateFreeBlock(uint32_t preferred_group);
         
     public:
         bool setImage(std::string fileName);
@@ -214,6 +216,7 @@ namespace Ext4
         void cd(std::string path);
         void touch(std::string path);
         std::string getCurrentPath();
+        void mkdir(std::string name);
     };
 }
 #pragma pack(pop)
