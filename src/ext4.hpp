@@ -205,6 +205,8 @@ namespace Ext4
         bool isDirectory(const Inode& inode);
         uint32_t allocateFreeInode(uint32_t group);
         uint32_t allocateFreeBlock(uint32_t preferred_group);
+        bool isRegularFile(const Inode& inode);
+        uint64_t getInodeSizeBytes(const Inode& inode);
         
     public:
         bool setImage(std::string fileName);
@@ -217,6 +219,7 @@ namespace Ext4
         void touch(std::string path);
         std::string getCurrentPath();
         void mkdir(std::string name);
+        void cat(std::string name);
     };
 }
 #pragma pack(pop)
