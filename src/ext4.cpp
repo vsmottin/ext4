@@ -708,6 +708,17 @@ void Ext4::FileSystemManager::touch(string path)
     this->image_file.write(data_block_bytes.data(), block_size);
 }
 
+// As funções abaixo (allocateFreeInode, allocateFreeBlock) e as operações de
+// escrita em touch()/mkdir() modificam bitmaps de blocos/inodes, inodes e
+// entradas de diretório diretamente no disco, mas não recalculam os checksums
+// exigidos pela feature "metadata_csum" do ext4 (CRC32C sobre bitmaps, group
+// descriptors, inodes e DirEntryTail).
+
+// Também não são atualizados os contadores agregados de blocos/inodes livres
+// no superblock (s_free_blocks_count_lo, s_free_inodes_count) nem nos group
+// descriptors (bg_free_blocks_count_lo, bg_free_inodes_count, bg_used_dirs_count).
+// Os bitmaps (fonte real da informação de alocação) ficam corretos; apenas os
+// contadores "de cache" ficam desatualizados.
 uint32_t Ext4::FileSystemManager::allocateFreeInode(uint32_t group)
 {
     uint32_t block_size = this->sb.getBlockSize();
@@ -932,4 +943,74 @@ void Ext4::FileSystemManager::mkdir(string name)
     this->image_file.write(reinterpret_cast<char *>(&parent_inode), sizeof(Inode));
 
     cout << verde << "Diretório \"" << name << "\" criado com sucesso (inode " << new_inode_num << ")." << reset << endl;
+}
+
+bool Ext4::FileSystemManager::isRegularFile(const Inode& inode)
+{
+    return (inode.i_mode & 0xF000) == 0x8000;
+}
+
+uint64_t Ext4::FileSystemManager::getInodeSizeBytes(const Inode& inode)
+{
+    return (static_cast<uint64_t>(inode.i_size_high) << 32) | inode.i_size_lo;
+}
+
+void Ext4::FileSystemManager::cat(string name)
+{
+    if (name.empty())
+    {
+        cout << vermelho << "Erro: nome de arquivo inválido." << reset << endl;
+        return;
+    }
+
+    uint32_t file_inode_num = this->findInodeInDirectory(this->current_inode, name);
+    if (file_inode_num == 0)
+    {
+        cout << vermelho << "Erro: \"" << name << "\" não existe." << reset << endl;
+        return;
+    }
+
+    Inode file_inode = this->readInode(file_inode_num);
+
+    if (!this->isRegularFile(file_inode))
+    {
+        cout << vermelho << "Erro: \"" << name << "\" não é um arquivo regular." << reset << endl;
+        return;
+    }
+
+    uint64_t file_size = this->getInodeSizeBytes(file_inode);
+    if (file_size == 0)
+    {
+        return;
+    }
+
+    uint32_t block_size = this->sb.getBlockSize();
+    vector<uint32_t> blocks = this->getInodeDataBlocks(file_inode_num);
+
+    if (blocks.empty())
+    {
+        cout << vermelho << "Erro: arquivo não possui blocos de dados válidos." << reset << endl;
+        return;
+    }
+
+    uint64_t bytes_remaining = file_size;
+    vector<char> buffer(block_size);
+
+    for (uint32_t block : blocks)
+    {
+        if (bytes_remaining == 0)
+            break;
+
+        uint32_t bytes_to_read = (bytes_remaining < block_size) ? static_cast<uint32_t>(bytes_remaining) : block_size;
+
+        this->image_file.clear();
+        this->image_file.seekg(static_cast<uint64_t>(block) * block_size);
+        this->image_file.read(buffer.data(), bytes_to_read);
+
+        cout.write(buffer.data(), bytes_to_read);
+
+        bytes_remaining -= bytes_to_read;
+    }
+
+    cout << endl;
 }
