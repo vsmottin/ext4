@@ -55,14 +55,14 @@ namespace Ext4
         uint8_t s_journal_uuid[16];        // 0xD0 - UUID do journal
         uint32_t s_journal_inum;           // 0xE0 - Número do inode do journal
 
-        uint32_t s_journal_dev;     // 0xE4 - Dispositivo do journal
-        uint32_t s_last_orphan;     // 0xE8 - Lista de inodes orfãos
-        uint32_t s_hash_seed[4];    // 0xEC - Seed do hash
-        uint8_t s_def_hash_version; // 0xFC - Versão do hash padrão
-        uint8_t s_jnl_backup_type;  // 0xFD - Tipo de backup do journal
-        uint16_t s_desc_size;       // 0xFE - Tamanho do descritor
+        uint32_t s_journal_dev;            // 0xE4 - Dispositivo do journal
+        uint32_t s_last_orphan;            // 0xE8 - Lista de inodes orfãos
+        uint32_t s_hash_seed[4];           // 0xEC - Seed do hash
+        uint8_t s_def_hash_version;        // 0xFC - Versão do hash padrão
+        uint8_t s_jnl_backup_type;         // 0xFD - Tipo de backup do journal
+        uint16_t s_desc_size;              // 0xFE - Tamanho do descritor
 
-        uint8_t padding[768]; // 0x100 - Preenchimento
+        uint8_t padding[768];              // 0x100 - Preenchimento
 
     public:
         std::string getVolumeName();
@@ -79,6 +79,7 @@ namespace Ext4
         uint32_t getBlocksPerGroup();
         uint32_t getFirstDataBlock();
         uint32_t getInodeSize();
+        uint32_t getFirstFreeInode();
     };
 
     struct GroupDescriptor
@@ -186,17 +187,24 @@ namespace Ext4
     class FileSystemManager
     {
     private:
-        std::ifstream image_file;
+        std::fstream image_file;
         SuperBlock sb;
         std::vector<GroupDescriptor> group_descriptors;
         uint32_t current_inode;
+        std::string current_path;
 
         std::vector<uint32_t> getDataBlocks(const Inode& inode);
         Inode readInode(uint32_t num);
         Inode resolveNameToInode(const std::string& path);
         uint64_t getInodeOffset(uint32_t inode_num);
         uint32_t getInodeDataBlock(uint32_t inode_num);
-
+        std::vector<uint32_t> getInodeDataBlocks(uint32_t inode_num);
+        void collectExtentBlocks(uint32_t block_num, std::vector<uint32_t>& blocks);
+        uint32_t findInodeInDirectory(uint32_t dir_inode, const std::string& name);
+        bool isDirectory(const Inode& inode);
+        uint32_t allocateFreeInode(uint32_t group);
+        uint32_t allocateFreeBlock(uint32_t preferred_group);
+        
     public:
         bool setImage(std::string fileName);
         bool info();
@@ -205,6 +213,11 @@ namespace Ext4
         void attr(std::string path);
         void rmdir();
         void ls();
+        void pwd();
+        void cd(std::string path);
+        void touch(std::string path);
+        std::string getCurrentPath();
+        void mkdir(std::string name);
     };
 }
 

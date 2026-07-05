@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstring>
 #include <ctime>
+#include <vector>
 
 using namespace std;
 
@@ -161,30 +162,6 @@ string Ext4::Inode::getFileType(){
     }
 }
 
-Inode Ext4::FileSystemManager::readInode(uint32_t inode){
-    if (inode == 0 || inode > this-> sb.getBlockGroupsCount() * this-> sb.getInodesPerGroup()) {
-        cout << vermelho << "Erro: Inode fora dos limites." << reset << endl;
-        return Inode{};
-    }
-
-    uint32_t inodes_per_group = this-> sb.getInodesPerGroup();
-    uint32_t block_group = (inode - 1) / inodesPerGroup;
-    uint32_t local_index = (inode - 1) % inodesPerGroup;
-
-    GroupDescriptor desc = this-> group_descriptors[block_group];
-    uint32_t inode_table_block = desc.bg_inode_table_lo;
-    uint32_t block_size = this-> sb.getBlockSize();
-    uint32_t inode_size = this-> sb.getInodeSize();
-    uint64_t table_offset = static_cast<uint64_t>(inode_table_block) * block_size + local_index * inode_size;
-
-    Inode node{};
-    this-> image_file.clear();
-    this-> image_file.seekg(table_offset);
-    this-> image_file.read(reinterpret_cast<char*>(&node), sizeof(Inode));
-
-    return node;
-}
-
 Inode Ext4::FileSystemManager::resolveNameToInode(const string& path){
     uint32_t block_size = this-> sb.getBlockSize();
     uint32_t dataBlock = this-> getInodeDataBlock(this-> current_inode);
@@ -258,10 +235,15 @@ void Ext4::SuperBlock::superBlockStats()
     cout << endl;
 }
 
+uint32_t Ext4::SuperBlock::getFirstFreeInode()
+{
+    return this->s_first_ino;
+}
+
 bool Ext4::FileSystemManager::setImage(string fileName)
 {
     fileName.insert(0, "./images_ext4/");
-    ifstream file(fileName, ios::binary);
+    fstream file(fileName, ios::in | ios::out | ios::binary);
     if (!file)
     {
         cout << vermelho << "Erro ao abrir o arquivo, tente novamente" << reset << endl;
@@ -283,6 +265,7 @@ bool Ext4::FileSystemManager::setImage(string fileName)
     this->group_descriptors.resize(block_groupsCount);
     file.read(reinterpret_cast<char *>(this->group_descriptors.data()), sizeof(GroupDescriptor) * block_groupsCount);
     this->current_inode = 2;
+    this->current_path = "/";
     this->image_file = move(file);
     return true;
 }
@@ -467,4 +450,575 @@ void Ext4::FileSystemManager::attr(string path){
     cout << "Modificação:       " << ctime(&t_modif);
     cout << "Alteração (meta):  " << ctime(&t_meta);
     cout << "Criação:           " << ctime(&t_create);
+}
+
+void Ext4::FileSystemManager::pwd()
+{
+    cout << this->current_path << endl;
+}
+
+Ext4::Inode Ext4::FileSystemManager::readInode(uint32_t inode_num)
+{
+    Inode inode{};
+    uint64_t offset = this->getInodeOffset(inode_num);
+    this->image_file.clear();
+    this->image_file.seekg(offset);
+    this->image_file.read(reinterpret_cast<char *>(&inode), sizeof(Inode));
+    return inode;
+}
+
+bool Ext4::FileSystemManager::isDirectory(const Inode& inode)
+{
+    return (inode.i_mode & 0xF000) == 0x4000;
+}
+
+void Ext4::FileSystemManager::collectExtentBlocks(uint32_t block_num, std::vector<uint32_t>& blocks)
+{
+    ExtentHeader header;
+    uint32_t block_size = this->sb.getBlockSize();
+
+    this->image_file.clear();
+    this->image_file.seekg(static_cast<uint64_t>(block_num) * block_size);
+    this->image_file.read(reinterpret_cast<char *>(&header), sizeof(ExtentHeader));
+
+    if (header.eh_magic != 0xF30A)
+        return;
+
+    if (header.eh_depth == 0)
+    {
+        for (int i = 0; i < header.eh_entries; i++)
+        {
+            Extent extent;
+            this->image_file.read(reinterpret_cast<char *>(&extent), sizeof(Extent));
+            for (uint16_t j = 0; j < extent.ee_len; j++)
+                blocks.push_back(extent.ee_start_lo + j);
+        }
+    }
+    else
+    {
+        for (int i = 0; i < header.eh_entries; i++)
+        {
+            ExtentIdx idx;
+            this->image_file.read(reinterpret_cast<char *>(&idx), sizeof(ExtentIdx));
+            this->collectExtentBlocks(idx.ei_leaf_lo, blocks);
+        }
+    }
+}
+
+std::vector<uint32_t> Ext4::FileSystemManager::getInodeDataBlocks(uint32_t inode_num)
+{
+    std::vector<uint32_t> blocks;
+    Inode inode = this->readInode(inode_num);
+
+    ExtentHeader header;
+    memcpy(&header, &inode.i_block[0], sizeof(ExtentHeader));
+    if (header.eh_magic != 0xF30A)
+        return blocks;
+
+    if (header.eh_depth == 0)
+    {
+        for (int i = 0; i < header.eh_entries; i++)
+        {
+            Extent extent;
+            memcpy(&extent, &inode.i_block[3 + i * 3], sizeof(Extent));
+            for (uint16_t j = 0; j < extent.ee_len; j++)
+                blocks.push_back(extent.ee_start_lo + j);
+        }
+    }
+    else
+    {
+        for (int i = 0; i < header.eh_entries; i++)
+        {
+            ExtentIdx idx;
+            memcpy(&idx, &inode.i_block[3 + i * 3], sizeof(ExtentIdx));
+            this->collectExtentBlocks(idx.ei_leaf_lo, blocks);
+        }
+    }
+
+    return blocks;
+}
+
+uint32_t Ext4::FileSystemManager::findInodeInDirectory(uint32_t dir_inode, const std::string &name)
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    std::vector<uint32_t> blocks = this->getInodeDataBlocks(dir_inode);
+
+    for (uint32_t block : blocks)
+    {
+        std::vector<char> buffer(block_size);
+        this->image_file.clear();
+        this->image_file.seekg(static_cast<uint64_t>(block) * block_size);
+        this->image_file.read(buffer.data(), block_size);
+
+        uint32_t pos = 0;
+        while (pos + 8 <= block_size)
+        {
+            DirEntry *entry = reinterpret_cast<DirEntry *>(&buffer[pos]);
+            if (entry->rec_len < 8 || pos + entry->rec_len > block_size)
+                break;
+
+            if (entry->inode != 0 &&
+                entry->name_len == name.length() &&
+                strncmp(entry->name, name.c_str(), entry->name_len) == 0)
+            {
+                return entry->inode;
+            }
+
+            pos += entry->rec_len;
+        }
+    }
+
+    return 0;
+}
+
+static std::vector<std::string> tokenizePath(const std::string &path)
+{
+    std::vector<std::string> tokens;
+    std::string component;
+    for (size_t i = 0; i <= path.size(); i++)
+    {
+        if (i == path.size() || path[i] == '/')
+        {
+            if (!component.empty() && component != ".")
+                tokens.push_back(component);
+            component.clear();
+        }
+        else
+        {
+            component += path[i];
+        }
+    }
+    return tokens;
+}
+
+void Ext4::FileSystemManager::cd(std::string path)
+{
+    if (path.empty())
+        return;
+
+    uint32_t root_inode;
+    std::vector<std::string> path_stack;
+
+    if (path[0] == '/')
+    {
+        root_inode = 2;
+    }
+    else
+    {
+        root_inode = this->current_inode;
+        path_stack = tokenizePath(this->current_path);
+    }
+
+    std::vector<std::string> components = tokenizePath(path);
+
+    for (const std::string &component : components)
+    {
+        if (component == "..")
+        {
+            uint32_t parent_inode = this->findInodeInDirectory(root_inode, "..");
+            if (parent_inode == 0)
+            {
+                cout << vermelho << "Erro: não foi possível localizar o diretório pai." << reset << endl;
+                return;
+            }
+            root_inode = parent_inode;
+            if (!path_stack.empty())
+                path_stack.pop_back();
+        }
+        else
+        {
+            uint32_t found_inode = this->findInodeInDirectory(root_inode, component);
+            if (found_inode == 0)
+            {
+                cout << vermelho << "Erro: \"" << component << "\" não existe." << reset << endl;
+                return;
+            }
+
+            Inode inode = this->readInode(found_inode);
+            if (!this->isDirectory(inode))
+            {
+                cout << vermelho << "Erro: \"" << component << "\" não é um diretório." << reset << endl;
+                return;
+            }
+
+            root_inode = found_inode;
+            path_stack.push_back(component);
+        }
+    }
+
+    this->current_inode = root_inode;
+    this->current_path = "/";
+    for (size_t i = 0; i < path_stack.size(); i++)
+    {
+        this->current_path += path_stack[i];
+        if (i + 1 < path_stack.size())
+            this->current_path += "/";
+    }
+}
+
+string Ext4::FileSystemManager::getCurrentPath()
+{
+    return this->current_path;
+}
+
+void Ext4::FileSystemManager::touch(string path)
+{
+    if (path.length() > 255)
+    {
+        cout << vermelho << "Erro: O nome do arquivo é longo demais! O limite do Ext4 é 255 caracteres." << reset << endl;
+        return;
+    }
+    uint32_t block_size = this->sb.getBlockSize();
+
+    uint32_t data_block = getInodeDataBlock(this->current_inode);
+    uint64_t data_block_offset = (static_cast<uint64_t>(data_block) * block_size);
+
+    this->image_file.seekg(data_block_offset);
+    vector<char> data_block_bytes(block_size);
+    this->image_file.read(data_block_bytes.data(), block_size);
+
+    uint32_t current_offset = 0;
+    DirEntry *last_dir_entry = nullptr;
+    uint32_t last_offset = 0;
+
+    while (current_offset < block_size)
+    {
+        if (current_offset + 8 > block_size)
+        {
+            cout << vermelho << "Erro: Bloco de diretório corrompido (extrapolou o limite do bloco)." << reset << endl;
+            return;
+        }
+
+        DirEntry *attempt_dir_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[current_offset]);
+        if (attempt_dir_entry->rec_len < 12 || (attempt_dir_entry->rec_len % 4) != 0)
+        {
+            cout << vermelho << "Erro: Estrutura Ext4 inválida detectada (rec_len inválido: "
+                 << attempt_dir_entry->rec_len << ")." << reset << endl;
+            return;
+        }
+        if (current_offset + attempt_dir_entry->rec_len > block_size)
+        {
+            cout << vermelho << "Erro: Entrada de diretório aponta para fora do bloco ("
+                 << current_offset + attempt_dir_entry->rec_len << " > " << block_size << ")." << reset << endl;
+            return;
+        }
+        if (attempt_dir_entry->inode != 0)
+        {
+            last_dir_entry = attempt_dir_entry;
+            last_offset = current_offset;
+        }
+        current_offset += attempt_dir_entry->rec_len;
+    }
+
+    if (last_dir_entry == nullptr)
+    {
+        cout << vermelho << "Erro: Nenhum registro válido de diretório foi encontrado no bloco." << reset << endl;
+        return;
+    }
+
+    uint32_t new_rec_len = ((last_dir_entry->name_len + 8 + 3) / 4) * 4;
+    uint32_t space_left = last_dir_entry->rec_len - new_rec_len;
+    uint32_t new_file_required_size = ((path.length() + 8 + 3) / 4) * 4;
+
+    if (space_left < new_file_required_size)
+    {
+        cout << vermelho << "Erro: O diretório atual não tem espaço para este arquivo!" << reset << endl;
+        return;
+    }
+    uint32_t group = (this->current_inode - 1) / this->sb.getInodesPerGroup();
+    GroupDescriptor desc = this->group_descriptors[group];
+    uint32_t inode_bitmap = desc.bg_inode_bitmap_lo;
+    uint64_t inode_bitmap_offset = static_cast<uint64_t>(inode_bitmap) * block_size;
+
+    this->image_file.clear();
+    this->image_file.seekg(inode_bitmap_offset);
+    vector<char> bytes(block_size);
+    this->image_file.read(bytes.data(), block_size);
+
+    uint32_t free_inode_index;
+    bool found = false;
+    for (uint32_t i = 0; i < block_size && !found; i++)
+    {
+        for (uint8_t j = 0; j < 8; j++)
+        {
+            if ((bytes[i] & (1 << j)) == 0)
+            {
+                uint32_t inode_number = (group * this->sb.getInodesPerGroup()) + (i * 8) + j + 1;
+                if (inode_number >= this->sb.getFirstFreeInode())
+                {
+                    free_inode_index = inode_number;
+                    found = true;
+                    bytes[i] |= (1 << j);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!found)
+    {
+        cout << vermelho << "Erro: o sistema de arquivos está cheio! Não há inodes livres" << reset << endl;
+        return;
+    }
+
+    this->image_file.seekp(inode_bitmap_offset);
+    this->image_file.write(bytes.data(), block_size);
+
+    uint32_t local_index_inode = (free_inode_index - 1) % this->sb.getInodesPerGroup();
+    uint64_t inode_offset = (static_cast<uint64_t>(desc.bg_inode_table_lo) * block_size) +
+                            static_cast<uint64_t>(local_index_inode) * this->sb.getInodeSize();
+    this->image_file.seekp(inode_offset);
+    Inode inode{};
+    inode.i_mode = 0x81A4;
+    inode.i_links_count = 1;
+    this->image_file.write(reinterpret_cast<char *>(&inode), sizeof(Inode));
+
+    uint32_t padding_size = this->sb.getInodeSize() - sizeof(Inode);
+    if (padding_size > 0)
+    {
+        vector<char> padding(padding_size, 0);
+        this->image_file.write(padding.data(), padding_size);
+    }
+    last_dir_entry->rec_len = new_rec_len;
+    uint32_t new_entry_offset = last_offset + new_rec_len;
+    DirEntry *new_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[new_entry_offset]);
+    new_entry->inode = free_inode_index;
+    new_entry->name_len = path.length();
+    new_entry->file_type = 1;
+    new_entry->rec_len = space_left;
+    uint32_t padding_bytes_to_clear = new_file_required_size - 8 - path.length();
+    if (padding_bytes_to_clear > 0)
+    {
+        memset(new_entry->name + path.length(), 0, padding_bytes_to_clear);
+    }
+    memcpy(new_entry->name, path.c_str(), path.length());
+
+    this->image_file.seekp(data_block_offset);
+    this->image_file.write(data_block_bytes.data(), block_size);
+}
+
+uint32_t Ext4::FileSystemManager::allocateFreeInode(uint32_t group)
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    GroupDescriptor &desc = this->group_descriptors[group];
+    uint64_t bitmap_offset = static_cast<uint64_t>(desc.bg_inode_bitmap_lo) * block_size;
+
+    vector<char> bitmap(block_size);
+    this->image_file.clear();
+    this->image_file.seekg(bitmap_offset);
+    this->image_file.read(bitmap.data(), block_size);
+
+    uint32_t inodes_per_group = this->sb.getInodesPerGroup();
+    for (uint32_t i = 0; i < inodes_per_group; i++)
+    {
+        uint32_t byte_index = i / 8;
+        uint8_t bit_index = i % 8;
+
+        if ((bitmap[byte_index] & (1 << bit_index)) == 0)
+        {
+            uint32_t inode_number = group * inodes_per_group + i + 1;
+            if (inode_number < this->sb.getFirstFreeInode())
+                continue;
+
+            bitmap[byte_index] |= (1 << bit_index);
+            this->image_file.clear();
+            this->image_file.seekp(bitmap_offset);
+            this->image_file.write(bitmap.data(), block_size);
+            return inode_number;
+        }
+    }
+    return 0;
+}
+
+uint32_t Ext4::FileSystemManager::allocateFreeBlock(uint32_t preferred_group)
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    uint32_t blocks_per_group = this->sb.getBlocksPerGroup();
+    uint32_t first_data_block = this->sb.getFirstDataBlock();
+    uint32_t group_count = this->sb.getBlockGroupsCount();
+
+    for (uint32_t g = 0; g < group_count; g++)
+    {
+        uint32_t group = (preferred_group + g) % group_count;
+        GroupDescriptor &desc = this->group_descriptors[group];
+        uint64_t bitmap_offset = static_cast<uint64_t>(desc.bg_block_bitmap_lo) * block_size;
+
+        vector<char> bitmap(block_size);
+        this->image_file.clear();
+        this->image_file.seekg(bitmap_offset);
+        this->image_file.read(bitmap.data(), block_size);
+
+        for (uint32_t i = 0; i < blocks_per_group; i++)
+        {
+            uint32_t byte_index = i / 8;
+            uint8_t bit_index = i % 8;
+            if (byte_index >= block_size)
+                break;
+
+            if ((bitmap[byte_index] & (1 << bit_index)) == 0)
+            {
+                bitmap[byte_index] |= (1 << bit_index);
+                this->image_file.clear();
+                this->image_file.seekp(bitmap_offset);
+                this->image_file.write(bitmap.data(), block_size);
+                return first_data_block + group * blocks_per_group + i;
+            }
+        }
+    }
+    return 0;
+}
+
+void Ext4::FileSystemManager::mkdir(string name)
+{
+    if (name.empty() || name.length() > 255)
+    {
+        cout << vermelho << "Erro: nome de diretório inválido." << reset << endl;
+        return;
+    }
+
+    if (this->findInodeInDirectory(this->current_inode, name) != 0)
+    {
+        cout << vermelho << "Erro: já existe um arquivo ou diretório com esse nome." << reset << endl;
+        return;
+    }
+
+    uint32_t block_size = this->sb.getBlockSize();
+    uint32_t data_block = this->getInodeDataBlock(this->current_inode);
+    uint64_t data_block_offset = static_cast<uint64_t>(data_block) * block_size;
+
+    vector<char> data_block_bytes(block_size);
+    this->image_file.clear();
+    this->image_file.seekg(data_block_offset);
+    this->image_file.read(data_block_bytes.data(), block_size);
+
+    uint32_t current_offset = 0;
+    DirEntry *last_dir_entry = nullptr;
+    uint32_t last_offset = 0;
+
+    while (current_offset < block_size)
+    {
+        DirEntry *entry = reinterpret_cast<DirEntry *>(&data_block_bytes[current_offset]);
+        if (entry->rec_len < 12 || (entry->rec_len % 4) != 0 || current_offset + entry->rec_len > block_size)
+        {
+            cout << vermelho << "Erro: estrutura de diretório inválida." << reset << endl;
+            return;
+        }
+        if (entry->inode != 0)
+        {
+            last_dir_entry = entry;
+            last_offset = current_offset;
+        }
+        current_offset += entry->rec_len;
+    }
+
+    if (last_dir_entry == nullptr)
+    {
+        cout << vermelho << "Erro: diretório atual corrompido." << reset << endl;
+        return;
+    }
+
+    uint32_t used_rec_len = ((last_dir_entry->name_len + 8 + 3) / 4) * 4;
+    uint32_t space_left = last_dir_entry->rec_len - used_rec_len;
+    uint32_t required = ((name.length() + 8 + 3) / 4) * 4;
+
+    if (space_left < required)
+    {
+        cout << vermelho << "Erro: o diretório atual não tem espaço para essa entrada." << reset << endl;
+        return;
+    }
+
+    uint32_t group = (this->current_inode - 1) / this->sb.getInodesPerGroup();
+
+    uint32_t new_inode_num = this->allocateFreeInode(group);
+    if (new_inode_num == 0)
+    {
+        cout << vermelho << "Erro: sem inodes livres." << reset << endl;
+        return;
+    }
+
+    uint32_t new_block_num = this->allocateFreeBlock(group);
+    if (new_block_num == 0)
+    {
+        cout << vermelho << "Erro: sem blocos livres." << reset << endl;
+        return;
+    }
+
+    vector<char> new_dir_block(block_size, 0);
+
+    DirEntry *dot = reinterpret_cast<DirEntry *>(&new_dir_block[0]);
+    dot->inode = new_inode_num;
+    dot->rec_len = 12;
+    dot->name_len = 1;
+    dot->file_type = 2;
+    dot->name[0] = '.';
+
+    DirEntry *dotdot = reinterpret_cast<DirEntry *>(&new_dir_block[12]);
+    dotdot->inode = this->current_inode;
+    dotdot->rec_len = block_size - 12;
+    dotdot->name_len = 2;
+    dotdot->file_type = 2;
+    dotdot->name[0] = '.';
+    dotdot->name[1] = '.';
+
+    this->image_file.clear();
+    this->image_file.seekp(static_cast<uint64_t>(new_block_num) * block_size);
+    this->image_file.write(new_dir_block.data(), block_size);
+
+    Inode new_inode{};
+    new_inode.i_mode = 0x41ED;
+    new_inode.i_links_count = 2;
+    new_inode.i_size_lo = block_size;
+
+    ExtentHeader header{};
+    header.eh_magic = 0xF30A;
+    header.eh_entries = 1;
+    header.eh_max = 4;
+    header.eh_depth = 0;
+    memcpy(&new_inode.i_block[0], &header, sizeof(ExtentHeader));
+
+    Extent extent{};
+    extent.ee_block = 0;
+    extent.ee_len = 1;
+    extent.ee_start_hi = 0;
+    extent.ee_start_lo = new_block_num;
+    memcpy(&new_inode.i_block[3], &extent, sizeof(Extent));
+
+    uint32_t new_group = (new_inode_num - 1) / this->sb.getInodesPerGroup();
+    uint32_t local_index = (new_inode_num - 1) % this->sb.getInodesPerGroup();
+    uint64_t inode_offset = static_cast<uint64_t>(this->group_descriptors[new_group].bg_inode_table_lo) * block_size +
+                             static_cast<uint64_t>(local_index) * this->sb.getInodeSize();
+
+    this->image_file.clear();
+    this->image_file.seekp(inode_offset);
+    this->image_file.write(reinterpret_cast<char *>(&new_inode), sizeof(Inode));
+
+    uint32_t padding_size = this->sb.getInodeSize() - sizeof(Inode);
+    if (padding_size > 0)
+    {
+        vector<char> padding(padding_size, 0);
+        this->image_file.write(padding.data(), padding_size);
+    }
+
+    last_dir_entry->rec_len = used_rec_len;
+    uint32_t new_entry_offset = last_offset + used_rec_len;
+    DirEntry *new_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[new_entry_offset]);
+    new_entry->inode = new_inode_num;
+    new_entry->name_len = name.length();
+    new_entry->file_type = 2;
+    new_entry->rec_len = space_left;
+    memset(new_entry->name, 0, required - 8);
+    memcpy(new_entry->name, name.c_str(), name.length());
+
+    this->image_file.clear();
+    this->image_file.seekp(data_block_offset);
+    this->image_file.write(data_block_bytes.data(), block_size);
+
+    Inode parent_inode = this->readInode(this->current_inode);
+    parent_inode.i_links_count += 1;
+    uint64_t parent_offset = this->getInodeOffset(this->current_inode);
+    this->image_file.clear();
+    this->image_file.seekp(parent_offset);
+    this->image_file.write(reinterpret_cast<char *>(&parent_inode), sizeof(Inode));
+
+    cout << verde << "Diretório \"" << name << "\" criado com sucesso (inode " << new_inode_num << ")." << reset << endl;
 }

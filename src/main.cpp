@@ -24,10 +24,10 @@ int main(){
     }
 
     fileName = trim(fileName);
-
     string comand;
-    while (true){
-        cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << "/]" << reset << "$ ";
+    while (true)
+    {
+        cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << fs.getCurrentPath() << "]" << reset << "$ ";
         cin >> comand;
         comand = trim(comand);
 
@@ -51,8 +51,40 @@ int main(){
             uint32_t block;
             cin >> block;
             fs.testb(block);
-
-        } else if (comand == "exit"){
+        } else if (comand == "pwd")
+        {
+            fs.pwd();
+        }
+        else if (comand == "touch")
+        {
+            string path;
+            getline(cin >> ws, path);
+            if (path.length() == 0)
+            {
+                cout << vermelho << "Caminho inválido" << reset << endl;
+                continue;
+            }
+            fs.touch(path);
+        }
+        else if (comand == "cd")
+        {
+            string path;
+            cin >> path;
+            fs.cd(path);
+        }
+        else if (comand == "mkdir")
+        {
+            string name;
+            getline(cin >> ws, name);
+            if (name.empty())
+                {
+                    cout << vermelho << "Nome inválido" << reset << endl;
+                    continue;
+                }
+            fs.mkdir(name);
+        }
+        else if (comand == "exit")
+        {
             break;
         
         } else {
