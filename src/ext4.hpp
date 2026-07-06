@@ -138,10 +138,11 @@ namespace Ext4
         uint32_t i_crtime_extra; // 0x94 - Tempo extra de criação do inode
         uint32_t i_version_hi;   // 0x98 - Versão do inode
         uint32_t i_projid;       // 0x9C - ID do projeto
+
+        std::string getFileType();
     };
 
-    struct ExtentHeader
-    {
+    struct ExtentHeader{
         uint16_t eh_magic;
         uint16_t eh_entries;
         uint16_t eh_max;
@@ -149,29 +150,25 @@ namespace Ext4
         uint32_t eh_generation;
     };
 
-    struct ExtentIdx
-    {
+    struct ExtentIdx{
         uint32_t ei_block;
         uint32_t ei_leaf_lo;
         uint16_t ei_leaf_hi;
         uint16_t ei_unused;
     };
 
-    struct Extent
-    {
+    struct Extent{
         uint32_t ee_block;
         uint16_t ee_len;
         uint16_t ee_start_hi;
         uint32_t ee_start_lo;
     };
 
-    struct ExtentTail
-    {
+    struct ExtentTail{
         uint32_t eb_checksum;
     };
 
-    struct DirEntry
-    {
+    struct DirEntry{
         uint32_t inode;
         uint16_t rec_len;
         uint8_t name_len;
@@ -179,8 +176,7 @@ namespace Ext4
         char name[EXT4_NAME_LEN];
     };
 
-    struct DirEntryTail
-    {
+    struct DirEntryTail{
         uint32_t det_reserved_zero1;
         uint16_t det_rec_len;
         uint8_t det_reserved_zero2;
@@ -196,9 +192,12 @@ namespace Ext4
         std::vector<GroupDescriptor> group_descriptors;
         uint32_t current_inode;
         std::string current_path;
+
+        std::vector<uint32_t> getDataBlocks(const Inode& inode);
+        Inode readInode(uint32_t num);
+        Inode resolveNameToInode(const std::string& path);
         uint64_t getInodeOffset(uint32_t inode_num);
         uint32_t getInodeDataBlock(uint32_t inode_num);
-        Inode readInode(uint32_t inode_num);
         std::vector<uint32_t> getInodeDataBlocks(uint32_t inode_num);
         void collectExtentBlocks(uint32_t block_num, std::vector<uint32_t>& blocks);
         uint32_t findInodeInDirectory(uint32_t dir_inode, const std::string& name);
@@ -212,7 +211,9 @@ namespace Ext4
         bool setImage(std::string fileName);
         bool info();
         void testi(uint32_t inode);
-        void testb(uint32_t bloco);
+        void testb(uint32_t block);
+        void attr(std::string path);
+        void rmdir();
         void ls();
         void pwd();
         void cd(std::string path);
@@ -222,4 +223,5 @@ namespace Ext4
         void cat(std::string name);
     };
 }
+
 #pragma pack(pop)
