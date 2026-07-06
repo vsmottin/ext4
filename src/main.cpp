@@ -1,10 +1,10 @@
-#include "ext4.hpp"
-#include "cores.h"
-#include "utils.hpp"
 #include <iostream>
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include "ext4.hpp"
+#include "cores.h"
+#include "utils.hpp"
 
 using namespace std;
 
@@ -51,12 +51,11 @@ int main(){
             uint32_t block;
             cin >> block;
             fs.testb(block);
-        } else if (comand == "pwd")
-        {
+
+        } else if (comand == "pwd"){
             fs.pwd();
-        }
-        else if (comand == "touch")
-        {
+        
+        } else if (comand == "touch"){
             string path;
             getline(cin >> ws, path);
             if (path.length() == 0)
@@ -65,15 +64,13 @@ int main(){
                 continue;
             }
             fs.touch(path);
-        }
-        else if (comand == "cd")
-        {
+            
+        } else if (comand == "cd"){
             string path;
             cin >> path;
             fs.cd(path);
-        }
-        else if (comand == "mkdir")
-        {
+
+        } else if (comand == "mkdir"){
             string name;
             getline(cin >> ws, name);
             if (name.empty())
@@ -82,9 +79,18 @@ int main(){
                     continue;
                 }
             fs.mkdir(name);
-        }
-        else if (comand == "cat")
-        {
+
+        } else if (comand == "rmdir"){
+            string name;
+            getline(cin >> ws, name);
+            if (name.empty())
+                {
+                    cout << vermelho << "Nome inválido" << reset << endl;
+                    continue;
+                }
+            fs.rmdir(name);
+
+        } else if (comand == "cat"){
             string name;
             getline(cin >> ws, name);
             if (name.empty())
@@ -93,9 +99,8 @@ int main(){
                 continue;
             }
             fs.cat(name);
-        }
-        else if (comand == "exit")
-        {
+
+        } else if (comand == "exit"){
             break;
         
         } else {
