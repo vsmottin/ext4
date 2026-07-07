@@ -11,6 +11,7 @@ using namespace std;
 int main()
 {
 #ifdef _WIN32
+    // Configura o terminal do Windows para suportar codificação UTF-8 (evita quebra de acentos)
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #endif
@@ -18,6 +19,8 @@ int main()
     string fileName;
     Ext4::FileSystemManager fs;
     bool img_chosen = false;
+
+    // Loop inicial para travar o usuário até que uma imagem Ext4 válida seja carregada com sucesso
     while (!img_chosen)
     {
         cout << amarelo << "ext4shell " << reset;
@@ -27,8 +30,11 @@ int main()
 
     fileName = trim(fileName);
     string comand;
+
+    // Loop principal encarregado de ler, interpretar e despachar os comandos do shell
     while (true)
     {
+        // Exibe o prompt customizado contendo o nome do arquivo de imagem e o caminho atual no Ext4
         cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << fs.getCurrentPath() << "]" << reset << "$ ";
         cin >> comand;
         comand = trim(comand);
@@ -69,6 +75,7 @@ int main()
         }
         else if (comand == "touch")
         {
+            // Captura o restante da linha ignorando espaços em branco iniciais para extrair caminhos compostos
             string path;
             getline(cin >> ws, path);
             if (path.length() == 0)
@@ -126,10 +133,21 @@ int main()
             if (current_name.empty() || new_name.empty())
             {
                 cout << vermelho << "Nomes inválidos" << reset << endl;
+                continue;
             }
             fs.rename(current_name, new_name);
         }
-
+        else if (comand == "rm")
+        {
+            string name;
+            cin >> name;
+            if (name.empty())
+            {
+                cout << vermelho << "Nome inválido" << reset << endl;
+                continue;
+            }
+            fs.rm(name);
+        }
         else if (comand == "exit")
         {
             break;

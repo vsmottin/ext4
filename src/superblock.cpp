@@ -207,3 +207,7 @@ void Ext4::SuperBlock::decrementFreeInodesCount(){
         this->s_free_inodes_count--;
     }
 }
+
+void Ext4::SuperBlock::incrementFreeBlocksCount(){
+    this->s_free_blocks_count_lo++;
+}

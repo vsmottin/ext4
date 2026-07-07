@@ -160,8 +160,10 @@ void Ext4::FileSystemManager::ls()
     this->image_file.seekg(block_in_disk);
     uint16_t bytes_read = 0;
     DirEntry dir_entry;
+    // Varre o bloco do diretório iterando pelo tamanho dinâmico (rec_len) de cada entrada
     while (bytes_read < block_size)
     {
+        // Lê os campos fixos do cabeçalho da DirEntry (Inodo, Tamanho do Registro, Tamanho do Nome e Tipo)
         this->image_file.seekg(block_in_disk + bytes_read);
         this->image_file.read(reinterpret_cast<char *>(&dir_entry.inode), sizeof(uint32_t));
         this->image_file.read(reinterpret_cast<char *>(&dir_entry.rec_len), sizeof(uint16_t));
@@ -173,6 +175,7 @@ void Ext4::FileSystemManager::ls()
             break;
         }
 
+        // Se a entrada for válida (Inodo não zerado), lê a string do nome diretamente do disco e a exibe
         if (dir_entry.inode != 0 && dir_entry.name_len > 0 && dir_entry.name_len <= (dir_entry.rec_len - 8))
         {
             string name(dir_entry.name_len, '\0');
@@ -192,6 +195,7 @@ uint64_t Ext4::FileSystemManager::getInodeOffset(uint32_t inode_num)
     uint32_t block_group = this->getGroupFromInode(inode_num);
     uint32_t index = (inode_num - 1) % this->sb.getInodesPerGroup();
 
+    // Localiza a tabela de inodes do grupo de blocos correspondente e calcula o offset exato do inode em bytes
     GroupDescriptor& desc = this->group_descriptors[block_group];
     uint64_t inode_table_bytes = static_cast<uint64_t>(desc.bg_inode_table_lo) * block_size;
 
@@ -207,12 +211,14 @@ uint32_t Ext4::FileSystemManager::getInodeDataBlock(uint32_t inode_num)
     Inode inode;
     this->image_file.read(reinterpret_cast<char *>(&inode), sizeof(Inode));
 
+    // Valida a assinatura mágica e a profundidade da árvore de Extents no cabeçalho interno do Inode
     ExtentHeader extent_header;
     memcpy(&extent_header, &inode.i_block[0], sizeof(ExtentHeader));
     if (extent_header.eh_magic != 0xF30A || extent_header.eh_depth != 0)
     {
         return 0;
     }
+    // Extrai o primeiro nó folha (Extent) e retorna o endereço físico do bloco de dados inicial
     Extent extent_leaf;
     memcpy(&extent_leaf, &inode.i_block[3], sizeof(Extent));
 
