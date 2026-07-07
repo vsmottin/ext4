@@ -1,5 +1,6 @@
 #include "ext4.hpp"
 #include "cores.h"
+#include "checksum/ext4checksum.h"
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <ctime>
 #include <vector>
+#include <set>
 
 using namespace std;
 
@@ -126,6 +128,14 @@ uint32_t Ext4::SuperBlock::getFirstDataBlock()
     return this->s_first_data_block;
 }
 
+char *Ext4::SuperBlock::getRawUUID(){
+    return reinterpret_cast<char *>(this-> s_uuid);
+}
+
+uint32_t Ext4::SuperBlock::getDescriptorSize(){
+    return this-> s_desc_size;
+}
+
 string Ext4::SuperBlock::getMagic()
 {
     switch (this->s_magic)
@@ -139,6 +149,14 @@ string Ext4::SuperBlock::getMagic()
 
 uint32_t Ext4::SuperBlock::getInodeSize(){
     return this-> s_inode_size;
+}
+
+uint32_t Ext4::SuperBlock::getInodesCount(){
+    return this-> s_inodes_count;
+}
+
+uint32_t Ext4::SuperBlock::getBlocksCount(){
+    return this-> s_blocks_count_lo;
 }
 
 string Ext4::Inode::getFileType(){
@@ -277,7 +295,7 @@ bool Ext4::FileSystemManager::info()
 }
 
 void Ext4::FileSystemManager::testi(uint32_t inode){
-    if (inode == 0 || inode > this-> sb.getBlockGroupsCount() * this-> sb.getInodesPerGroup()){
+    if (inode == 0 || inode > this-> sb.getInodesCount()){
         cout << vermelho << "Erro: Inode fora dos limites." << reset << endl;
         return;
     }
@@ -308,7 +326,7 @@ void Ext4::FileSystemManager::testi(uint32_t inode){
 }
 
 void Ext4::FileSystemManager::testb(uint32_t block){
-    if (block == 0 || block > this-> sb.getBlockGroupsCount() * this-> sb.getBlocksPerGroup()) {
+    if (block < this-> sb.getFirstDataBlock() || block >= this-> sb.getBlocksCount()) {
         cout << vermelho << "Erro: Bloco fora dos limites." << reset << endl;
         return;
     }
@@ -1034,7 +1052,81 @@ void Ext4::FileSystemManager::mkdir(string name)
     cout << verde << "Diretório \"" << name << "\" criado com sucesso (inode " << new_inode_num << ")." << reset << endl;
 }
 
-//ainda NÃO recalcula os checksums.
+uint64_t Ext4::FileSystemManager::getGroupDescriptorOffset(uint32_t group){
+    uint32_t block_size = this-> sb.getBlockSize();
+    uint32_t gdt_start_block = (block_size == 1024) ? 2 : 1;
+    return static_cast<uint64_t>(gdt_start_block) * block_size + static_cast<uint64_t>(group) * sizeof(GroupDescriptor);
+}
+
+void Ext4::FileSystemManager::updateBlockBitmapChecksum(uint32_t group){
+    uint32_t block_size = this-> sb.getBlockSize();
+    GroupDescriptor &desc = this-> group_descriptors[group];
+
+    vector<char> bitmap(block_size);
+    this-> image_file.clear();
+    this-> image_file.seekg(static_cast<uint64_t>(desc.bg_block_bitmap_lo) * block_size);
+    this-> image_file.read(bitmap.data(), block_size);
+
+    int size = this-> sb.getBlocksPerGroup() / 8;
+
+    uint32_t csum = checksum_bitmap(this-> sb.getRawUUID(), bitmap.data(), size);
+    desc.bg_block_bitmap_csum_lo = csum & 0xFFFF;
+    if (this-> sb.getDescriptorSize() > 32) desc.bg_block_bitmap_csum_hi = (csum >> 16) & 0xFFFF;
+}
+
+void Ext4::FileSystemManager::updateInodeBitmapChecksum(uint32_t group){
+    uint32_t block_size = this-> sb.getBlockSize();
+    GroupDescriptor &desc = this-> group_descriptors[group];
+
+    vector<char> bitmap(block_size);
+    this-> image_file.clear();
+    this-> image_file.seekg(static_cast<uint64_t>(desc.bg_inode_bitmap_lo) * block_size);
+    this-> image_file.read(bitmap.data(), block_size);
+
+    int size = this-> sb.getInodesPerGroup() / 8;
+
+    uint32_t csum = checksum_bitmap(this-> sb.getRawUUID(), bitmap.data(), size);
+    desc.bg_inode_bitmap_csum_lo = csum & 0xFFFF;
+    if (this-> sb.getDescriptorSize() > 32) desc.bg_inode_bitmap_csum_hi = (csum >> 16) & 0xFFFF;
+}
+
+void Ext4::FileSystemManager::updateGroupDescriptorChecksum(uint32_t group){
+    GroupDescriptor &desc = this-> group_descriptors[group];
+    desc.bg_checksum = checksum_group(this-> sb.getRawUUID(), group, reinterpret_cast<char *>(&desc));
+
+    this-> image_file.clear();
+    this-> image_file.seekp(this-> getGroupDescriptorOffset(group));
+    this-> image_file.write(reinterpret_cast<char *>(&desc), sizeof(GroupDescriptor));
+}
+
+void Ext4::FileSystemManager::writeInodeWithChecksum(uint32_t inode_num, vector<char>& inode_buf){
+    uint32_t inode_gen;
+    memcpy(&inode_gen, &inode_buf[0x64], 4);
+
+    uint32_t csum = checksum_inode(this-> sb.getRawUUID(), inode_num, inode_gen, inode_buf.data());
+    uint16_t lo = csum & 0xFFFF;
+    uint16_t hi = (csum >> 16) & 0xFFFF;
+    memcpy(&inode_buf[0x7C], &lo, 2);
+
+    if (this-> sb.getInodeSize() > 128) memcpy(&inode_buf[0x82], &hi, 2);
+
+    this-> image_file.clear();
+    this-> image_file.seekp(this-> getInodeOffset(inode_num));
+    this-> image_file.write(inode_buf.data(), this-> sb.getInodeSize());
+}
+
+void Ext4::FileSystemManager::writeDirBlockWithChecksum(uint32_t dir_inode_num, uint32_t block_num, vector<char>& buffer){
+    uint32_t block_size = this-> sb.getBlockSize();
+    Inode dir_inode = this-> readInode(dir_inode_num);
+
+    uint32_t csum = checksum_dir(this-> sb.getRawUUID(), dir_inode_num, dir_inode.i_generation, buffer.data(), block_size);
+    memcpy(&buffer[block_size - 4], &csum, 4);
+
+    this-> image_file.clear();
+    this-> image_file.seekp(static_cast<uint64_t>(block_num) * block_size);
+    this-> image_file.write(buffer.data(), block_size);
+}
+
 void Ext4::FileSystemManager::rmdir(string name){
     if (name.empty() || name == "." || name == ".."){
         cout << vermelho << "Erro: nome de diretório inválido." << reset << endl;
@@ -1106,9 +1198,7 @@ void Ext4::FileSystemManager::rmdir(string name){
                     entry-> inode = 0;
                 }
 
-                this-> image_file.clear();
-                this-> image_file.seekp(block_offset);
-                this-> image_file.write(buffer.data(), block_size);
+                this-> writeDirBlockWithChecksum(this-> current_inode, block, buffer);
                 removed = true;
                 break;
             }
@@ -1128,6 +1218,9 @@ void Ext4::FileSystemManager::rmdir(string name){
     uint32_t first_data_block = this-> sb.getFirstDataBlock();
     uint32_t blocks_per_group = this-> sb.getBlocksPerGroup();
 
+    //grupos cujos metadados mudaram e precisam ter o checksum recalculado.
+    set<uint32_t> affected_groups;
+
     for (uint32_t block : target_blocks){
         uint32_t g = (block - first_data_block) / blocks_per_group;
         uint32_t local = (block - first_data_block) % blocks_per_group;
@@ -1143,7 +1236,13 @@ void Ext4::FileSystemManager::rmdir(string name){
         this-> image_file.clear();
         this-> image_file.seekp(bitmap_offset + local / 8);
         this-> image_file.write(reinterpret_cast<char *>(&byte), 1);
+
+        affected_groups.insert(g);
     }
+
+    //recalcula o checksum do bitmap de blocos de cada grupo tocado.
+    for (uint32_t g : affected_groups)
+        this-> updateBlockBitmapChecksum(g);
 
     uint32_t inodes_per_group = this-> sb.getInodesPerGroup();
     uint32_t inode_group = (target_inode - 1) / inodes_per_group;
@@ -1154,30 +1253,49 @@ void Ext4::FileSystemManager::rmdir(string name){
     this-> image_file.clear();
     this-> image_file.seekg(inode_bitmap_offset + inode_local / 8);
     this-> image_file.read(reinterpret_cast<char *>(&byte), 1);
-    
+
     byte &= ~(1 << (inode_local % 8));
 
     this-> image_file.clear();
     this-> image_file.seekp(inode_bitmap_offset + inode_local / 8);
     this-> image_file.write(reinterpret_cast<char *>(&byte), 1);
-    
-    vector<char> inode_buffer(this-> sb.getInodeSize(), 0);
-    Inode empty_inode{};
-    empty_inode.i_dtime = static_cast<uint32_t>(time(nullptr));
-    memcpy(inode_buffer.data(), &empty_inode, sizeof(Inode));
+
+    this-> updateInodeBitmapChecksum(inode_group);
+    affected_groups.insert(inode_group);
+
+    //zera o inode alvo, preservando i_extra_isize e marcando i_dtime.
     uint64_t inode_offset = this-> getInodeOffset(target_inode);
+    vector<char> inode_buffer(this-> sb.getInodeSize());
     this-> image_file.clear();
-    this-> image_file.seekp(inode_offset);
-    this-> image_file.write(inode_buffer.data(), this-> sb.getInodeSize());
+    this-> image_file.seekg(inode_offset);
+    this-> image_file.read(inode_buffer.data(), this-> sb.getInodeSize());
 
-    Inode parent_inode = this-> readInode(this-> current_inode);
+    uint16_t extra_isize;
+    memcpy(&extra_isize, &inode_buffer[0x80], 2);
+    memset(inode_buffer.data(), 0, this-> sb.getInodeSize());
+    memcpy(&inode_buffer[0x80], &extra_isize, 2);
+    uint32_t dtime = static_cast<uint32_t>(time(nullptr));
+    memcpy(&inode_buffer[0x14], &dtime, 4);
 
-    if (parent_inode.i_links_count > 0) parent_inode.i_links_count -= 1;
+    this-> writeInodeWithChecksum(target_inode, inode_buffer);
 
+    //decrementa i_links_count do pai (o .. do filho apontava para ele).
     uint64_t parent_offset = this-> getInodeOffset(this-> current_inode);
+    vector<char> parent_buffer(this-> sb.getInodeSize());
     this-> image_file.clear();
-    this-> image_file.seekp(parent_offset);
-    this-> image_file.write(reinterpret_cast<char *>(&parent_inode), sizeof(Inode));
+    this-> image_file.seekg(parent_offset);
+    this-> image_file.read(parent_buffer.data(), this-> sb.getInodeSize());
+
+    uint16_t links;
+    memcpy(&links, &parent_buffer[0x1A], 2);
+    if (links > 0) links -= 1;
+    memcpy(&parent_buffer[0x1A], &links, 2);
+
+    this-> writeInodeWithChecksum(this-> current_inode, parent_buffer);
+
+    //recalcula bg_checksum e grava cada descritor afetado (depois dos bitmaps).
+    for (uint32_t g : affected_groups)
+        this-> updateGroupDescriptorChecksum(g);
 
     this-> image_file.flush();
 
