@@ -2,6 +2,7 @@
 #include <fstream>
 #include <vector>
 #include <string>
+
 // Definição das classes e variáveis
 
 #pragma once

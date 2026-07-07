@@ -23,19 +23,23 @@ bool Ext4::FileSystemManager::setImage(string fileName)
     }
     cout << verde << "Arquivo aberto com sucesso" << reset << endl;
 
+    // Salta o padding inicial de 1024 bytes e carrega o Superbloco para a memória
     file.seekg(1024);
     file.read(reinterpret_cast<char *>(&this->sb), sizeof(SuperBlock));
 
     uint32_t block_size = this->sb.getBlockSize();
 
-    // block group descriptor table.
+    // Determina o bloco inicial da BGDT (Block Group Descriptor Table) com base no tamanho do bloco
     uint32_t bgdtStartBlock = (block_size == 1024) ? 2 : 1;
 
+    // Calcula o offset em bytes e lê a tabela de descritores de todos os grupos de blocos
     uint64_t bgdtOffset = bgdtStartBlock * block_size;
     file.seekg(bgdtOffset);
     uint32_t block_groupsCount = this->sb.getBlockGroupsCount();
     this->group_descriptors.resize(block_groupsCount);
     file.read(reinterpret_cast<char *>(this->group_descriptors.data()), sizeof(GroupDescriptor) * block_groupsCount);
+    
+    // Define o diretório raiz (Inode 2) como o ponto de partida inicial do sistema
     this->current_inode = 2;
     this->current_path = "/";
     this->image_file = move(file);
@@ -62,6 +66,7 @@ void Ext4::FileSystemManager::touch(string path)
     DirEntry *last_dir_entry = nullptr;
     uint32_t last_offset = 0;
 
+    // Varre as entradas existentes no bloco de diretório para encontrar o último registro válido
     while (current_offset < block_size)
     {
         if (current_offset + 8 > block_size)
@@ -97,6 +102,7 @@ void Ext4::FileSystemManager::touch(string path)
         return;
     }
 
+    // Calcula o espaço necessário e verifica se a última entrada pode ser encolhida para abrir espaço para o novo arquivo
     uint32_t new_rec_len = ((last_dir_entry->name_len + 8 + 3) / 4) * 4;
     uint32_t space_left = last_dir_entry->rec_len - new_rec_len;
     uint32_t new_file_required_size = ((path.length() + 8 + 3) / 4) * 4;
@@ -116,6 +122,7 @@ void Ext4::FileSystemManager::touch(string path)
     vector<char> bytes(block_size);
     this->image_file.read(bytes.data(), block_size);
 
+    // Varre o bitmap de inodes bit a bit para encontrar e marcar a primeira posição livre disponível
     uint32_t free_inode_index;
     bool found = false;
     for (uint32_t i = 0; i < block_size && !found; i++)
@@ -142,11 +149,13 @@ void Ext4::FileSystemManager::touch(string path)
         return;
     }
 
+    // Salva o bitmap de inodes atualizado e recalcula o seu respectivo checksum
     this->image_file.seekp(inode_bitmap_offset);
     this->image_file.write(bytes.data(), block_size);
 
     this->updateInodeBitmapChecksum(group);
 
+    // Inicializa a nova estrutura de Inode em memória com as flags de arquivo regular e a árvore de Extents vazia
     uint32_t inode_size = this->sb.getInodeSize();
     vector<char> inode_buf(inode_size, 0);
     Inode *inode = reinterpret_cast<Inode *>(inode_buf.data());
@@ -170,8 +179,10 @@ void Ext4::FileSystemManager::touch(string path)
         *i_extra_isize = 32;
     }
 
+    // Persiste o novo Inode diretamente na tabela de inodes do disco
     this->writeInodeWithChecksum(free_inode_index, inode_buf);
 
+    // Modifica a entrada de diretório antiga e insere fisicamente a nova DirEntry no espaço liberado
     last_dir_entry->rec_len = new_rec_len;
     uint32_t new_entry_offset = last_offset + new_rec_len;
     DirEntry *new_entry = reinterpret_cast<DirEntry *>(&data_block_bytes[new_entry_offset]);
@@ -186,6 +197,7 @@ void Ext4::FileSystemManager::touch(string path)
     }
     memcpy(new_entry->name, path.c_str(), path.length());
 
+    // Grava o bloco do diretório atualizado no disco atualizando seus metadados de validação
     this->writeDirBlockWithChecksum(this->current_inode, data_block, data_block_bytes);
 
     if (desc.bg_free_inodes_count > 0)
@@ -199,6 +211,7 @@ void Ext4::FileSystemManager::touch(string path)
     this->updateGroupDescriptorChecksum(group);
     this->sb.decrementFreeInodesCount();
 
+    // Atualiza os contadores globais de inodes livres no Superbloco e sincroniza tudo com a imagem em disco
     vector<char> sb_buffer(1024);
     this->image_file.clear();
     this->image_file.seekg(1024);
@@ -769,7 +782,7 @@ void Ext4::FileSystemManager::rename(string name, string newName)
             string current_name(dir_entry->name, dir_entry->name_len);
             if (current_name == name)
             {
-                // espaço necessário = 8 bytes de cabeçalho + tamanho do nome, arredondando pra cima
+                // Espaço necessário = 8 bytes de cabeçalho + tamanho do nome, arredondando pra cima
                 uint16_t space = (8 + newName.length() + 3) & ~3;
                 if (space <= dir_entry->rec_len)
                 {
@@ -782,7 +795,7 @@ void Ext4::FileSystemManager::rename(string name, string newName)
                 }
                 else
                 {
-                    // verificação do espaço total
+                    // Caso o novo nome precise de mais espaço, calcula o tamanho mínimo que todas as entradas válidas somadas vão ocupar
                     uint16_t total_needed = 0;
                     uint16_t check_offset = 0;
                     while (check_offset < block_size)
@@ -813,13 +826,14 @@ void Ext4::FileSystemManager::rename(string name, string newName)
                         check_offset += check_entry->rec_len;
                     }
 
+                    // Se a soma do tamanho comprimido de todas as entradas estourar o bloco, aborta pois não cabe reorganização
                     if (total_needed > block_size)
                     {
                         cout << vermelho << "Não há espaço suficiente no diretório para renomear o arquivo" << reset << endl;
                         return;
                     }
 
-                    // caso o nome seja maior, é necessário alterar os DirEntry
+                    // Reconstrói o bloco do diretório do zero (compactando o espaço fragmentado) em um novo buffer temporário
                     vector<char> new_buffer(block_size, 0);
                     uint16_t new_bytes_written = 0;
                     DirEntry *last_entry = nullptr;
@@ -876,6 +890,7 @@ void Ext4::FileSystemManager::rename(string name, string newName)
                         last_entry->rec_len = tail_offset - current_entry_start;
                     }
 
+                    // Cria a estrutura de rodapé (DirEntryTail) no final do bloco para suportar metadados de metachecksum do Ext4
                     DirEntry *tail_entry = reinterpret_cast<DirEntry *>(&new_buffer[tail_offset]);
                     tail_entry->inode = 0;        // Obrigatório ser 0 para Tails
                     tail_entry->rec_len = 12;     // Tamanho exato do cabeçalho de checksum do diretório
@@ -1019,7 +1034,7 @@ void Ext4::FileSystemManager::rm(string name)
     GroupDescriptor &desc = this->group_descriptors[group];
     // Atualiza contador de inodes livres do grupo
     desc.bg_free_inodes_count++;
-    
+
     // Atualiza o bitmap de inodes
     uint32_t inode_bitmap = desc.bg_inode_bitmap_lo;
     uint64_t inode_bitmap_offset = static_cast<uint64_t>(inode_bitmap) * block_size;
@@ -1031,10 +1046,10 @@ void Ext4::FileSystemManager::rm(string name)
     uint16_t byte_offset = local_inode_index / 8;
     uint16_t bit_offset = local_inode_index % 8;
     bytes[byte_offset] &= ~(1 << bit_offset);
-    
+
     this->image_file.seekp(inode_bitmap_offset);
     this->image_file.write(bytes.data(), block_size);
-    
+
     this->updateInodeBitmapChecksum(group);
     this->updateGroupDescriptorChecksum(group);
 
@@ -1065,7 +1080,7 @@ void Ext4::FileSystemManager::rm(string name)
 void Ext4::FileSystemManager::writeGroupDescriptors()
 {
     uint32_t block_size = this->sb.getBlockSize();
-    
+
     // O offset depende do tamanho do bloco no Ext4
     uint64_t gd_offset = (block_size == 1024) ? 2048 : block_size;
 
@@ -1074,7 +1089,6 @@ void Ext4::FileSystemManager::writeGroupDescriptors()
 
     // Escreve todo o vetor de descriptors de volta para o disco
     this->image_file.write(
-        reinterpret_cast<const char*>(this->group_descriptors.data()), 
-        this->group_descriptors.size() * this->sb.getDescriptorSize()
-    );
+        reinterpret_cast<const char *>(this->group_descriptors.data()),
+        this->group_descriptors.size() * this->sb.getDescriptorSize());
 }
