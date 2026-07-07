@@ -80,6 +80,9 @@ namespace Ext4
         uint32_t getFirstDataBlock();
         uint32_t getInodeSize();
         uint32_t getFirstFreeInode();
+        
+        char *getRawUUID();          
+        uint32_t getDescriptorSize();
     };
 
     struct GroupDescriptor
@@ -206,7 +209,14 @@ namespace Ext4
         uint32_t allocateFreeBlock(uint32_t preferred_group);
         bool isRegularFile(const Inode& inode);
         uint64_t getInodeSizeBytes(const Inode& inode);
-        
+
+        uint64_t getGroupDescriptorOffset(uint32_t group);
+        void updateBlockBitmapChecksum(uint32_t group);
+        void updateInodeBitmapChecksum(uint32_t group);
+        void updateGroupDescriptorChecksum(uint32_t group);
+        void writeInodeWithChecksum(uint32_t inode_num, std::vector<char>& inode_buf);
+        void writeDirBlockWithChecksum(uint32_t dir_inode_num, uint32_t block_num, std::vector<char>& buffer);
+
     public:
         bool setImage(std::string fileName);
         bool info();
