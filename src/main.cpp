@@ -8,7 +8,8 @@
 
 using namespace std;
 
-int main(){
+int main()
+{
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
@@ -17,7 +18,8 @@ int main(){
     string fileName;
     Ext4::FileSystemManager fs;
     bool img_chosen = false;
-    while (!img_chosen){
+    while (!img_chosen)
+    {
         cout << amarelo << "ext4shell " << reset;
         cin >> fileName;
         img_chosen = fs.setImage(trim(fileName));
@@ -30,32 +32,43 @@ int main(){
         cout << amarelo << "ext4shell:" << reset azul << "[" << fileName << fs.getCurrentPath() << "]" << reset << "$ ";
         cin >> comand;
         comand = trim(comand);
-
-        if (comand == "info"){
+        if (comand == "clear")
+        {
+            cout << "\033[2J\033[H";
+            cout.flush();
+        }
+        else if (comand == "info")
+        {
             fs.info();
-
-        } else if (comand == "attr"){
+        }
+        else if (comand == "attr")
+        {
             string alvo;
             cin >> alvo;
             fs.attr(trim(alvo));
-
-        } else if (comand == "ls"){
+        }
+        else if (comand == "ls")
+        {
             fs.ls();
-        
-        } else if (comand == "testi"){
+        }
+        else if (comand == "testi")
+        {
             uint32_t inode;
             cin >> inode;
             fs.testi(inode);
-        
-        } else if (comand == "testb"){
+        }
+        else if (comand == "testb")
+        {
             uint32_t block;
             cin >> block;
             fs.testb(block);
-
-        } else if (comand == "pwd"){
+        }
+        else if (comand == "pwd")
+        {
             fs.pwd();
-        
-        } else if (comand == "touch"){
+        }
+        else if (comand == "touch")
+        {
             string path;
             getline(cin >> ws, path);
             if (path.length() == 0)
@@ -64,33 +77,37 @@ int main(){
                 continue;
             }
             fs.touch(path);
-            
-        } else if (comand == "cd"){
+        }
+        else if (comand == "cd")
+        {
             string path;
             cin >> path;
             fs.cd(path);
-
-        } else if (comand == "mkdir"){
+        }
+        else if (comand == "mkdir")
+        {
             string name;
             getline(cin >> ws, name);
             if (name.empty())
-                {
-                    cout << vermelho << "Nome inválido" << reset << endl;
-                    continue;
-                }
+            {
+                cout << vermelho << "Nome inválido" << reset << endl;
+                continue;
+            }
             fs.mkdir(name);
-
-        } else if (comand == "rmdir"){
+        }
+        else if (comand == "rmdir")
+        {
             string name;
             getline(cin >> ws, name);
             if (name.empty())
-                {
-                    cout << vermelho << "Nome inválido" << reset << endl;
-                    continue;
-                }
+            {
+                cout << vermelho << "Nome inválido" << reset << endl;
+                continue;
+            }
             fs.rmdir(name);
-
-        } else if (comand == "cat"){
+        }
+        else if (comand == "cat")
+        {
             string name;
             getline(cin >> ws, name);
             if (name.empty())
@@ -99,11 +116,26 @@ int main(){
                 continue;
             }
             fs.cat(name);
+        }
+        else if (comand == "rename")
+        {
+            string current_name;
+            cin >> current_name;
+            string new_name;
+            cin >> new_name;
+            if (current_name.empty() || new_name.empty())
+            {
+                cout << vermelho << "Nomes inválidos" << reset << endl;
+            }
+            fs.rename(current_name, new_name);
+        }
 
-        } else if (comand == "exit"){
+        else if (comand == "exit")
+        {
             break;
-        
-        } else {
+        }
+        else
+        {
             cout << vermelho << "Comando inválido" << reset << endl;
         }
     }
