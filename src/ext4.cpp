@@ -162,7 +162,7 @@ string Ext4::Inode::getFileType(){
     }
 }
 
-Inode Ext4::FileSystemManager::resolveNameToInode(const string& path){
+Ext4::Inode Ext4::FileSystemManager::resolveNameToInode(const string& path){
     uint32_t block_size = this-> sb.getBlockSize();
     uint32_t dataBlock = this-> getInodeDataBlock(this-> current_inode);
     
@@ -438,9 +438,9 @@ void Ext4::FileSystemManager::attr(string path){
     time_t t_create = inode.i_crtime;
 
     cout << endl;
-    cout << ciano negrito << "Atributos de " << path << reset << endl;
+    cout << ciano << "Atributos de " << negrito << path << reset << endl;
     cout << "Tipo:              " << inode.getFileType() << endl;
-    cout << "Permissões:        " << permissions << "  (" << oct << (inode.i_mode & 0x1FF) << dec << ")" << endl;
+    cout << "Permissões:        " << permissions << " (" << oct << (inode.i_mode & 0x1FF) << dec << ")" << endl;
     cout << "Tamanho:           " << size << " bytes" << endl;
     cout << "Dono (UID):        " << inode.i_uid << endl;
     cout << "Grupo (GID):       " << inode.i_gid << endl;
@@ -1032,6 +1032,156 @@ void Ext4::FileSystemManager::mkdir(string name)
     this->image_file.write(reinterpret_cast<char *>(&parent_inode), sizeof(Inode));
 
     cout << verde << "Diretório \"" << name << "\" criado com sucesso (inode " << new_inode_num << ")." << reset << endl;
+}
+
+//ainda NÃO recalcula os checksums.
+void Ext4::FileSystemManager::rmdir(string name){
+    if (name.empty() || name == "." || name == ".."){
+        cout << vermelho << "Erro: nome de diretório inválido." << reset << endl;
+        return;
+    }
+
+    uint32_t target_inode = this-> findInodeInDirectory(this-> current_inode, name);
+    if (target_inode == 0){
+        cout << vermelho << "Erro: \"" << name << "\" não existe." << reset << endl;
+        return;
+    }
+
+    Inode inode = this-> readInode(target_inode);
+    if (!this-> isDirectory(inode)){
+        cout << vermelho << "Erro: \"" << name << "\" não é um diretório." << reset << endl;
+        return;
+    }
+
+    uint32_t block_size = this-> sb.getBlockSize();
+    vector<uint32_t> target_blocks = this-> getInodeDataBlocks(target_inode);
+
+    //verifica se está vazio (apenas . e ..).
+    for (uint32_t block : target_blocks){
+        vector<char> buffer(block_size);
+        this-> image_file.clear();
+        this-> image_file.seekg(static_cast<uint64_t>(block) * block_size);
+        this-> image_file.read(buffer.data(), block_size);
+
+        uint32_t pos = 0;
+        while (pos + 8 <= block_size){
+            DirEntry *entry = reinterpret_cast<DirEntry *>(&buffer[pos]);
+            if (entry-> rec_len < 8 || pos + entry-> rec_len > block_size)
+                break;
+
+            if (entry-> inode != 0 && entry-> name_len > 0){
+                string entry_name(entry-> name, entry-> name_len);
+                if (entry_name != "." && entry_name != ".."){
+                    cout << vermelho << "Erro: o diretório \"" << name << "\" não está vazio." << reset << endl;
+                    return;
+                }
+            }
+
+            pos += entry-> rec_len;
+        }
+    }
+
+    bool removed = false;
+    vector<uint32_t> parent_blocks = this->getInodeDataBlocks(this-> current_inode);
+    for (uint32_t block : parent_blocks){
+        uint64_t block_offset = static_cast<uint64_t>(block) * block_size;
+        vector<char> buffer(block_size);
+        this-> image_file.clear();
+        this-> image_file.seekg(block_offset);
+        this-> image_file.read(buffer.data(), block_size);
+
+        uint32_t pos = 0;
+        DirEntry *prev = nullptr;
+        while (pos + 8 <= block_size){
+            DirEntry *entry = reinterpret_cast<DirEntry *>(&buffer[pos]);
+            if (entry-> rec_len < 8 || pos + entry-> rec_len > block_size)
+                break;
+
+            if (entry-> inode == target_inode && entry-> name_len == name.length() && 
+            strncmp(entry-> name, name.c_str(), entry-> name_len) == 0){
+                
+                if (prev != nullptr){
+                    prev-> rec_len += entry-> rec_len;
+                } else {
+                    entry-> inode = 0;
+                }
+
+                this-> image_file.clear();
+                this-> image_file.seekp(block_offset);
+                this-> image_file.write(buffer.data(), block_size);
+                removed = true;
+                break;
+            }
+
+            prev = entry;
+            pos += entry-> rec_len;
+        }
+
+        if (removed) break;
+    }
+
+    if (!removed){
+        cout << vermelho << "Erro: não foi possível remover a entrada do diretório." << reset << endl;
+        return;
+    }
+
+    uint32_t first_data_block = this-> sb.getFirstDataBlock();
+    uint32_t blocks_per_group = this-> sb.getBlocksPerGroup();
+
+    for (uint32_t block : target_blocks){
+        uint32_t g = (block - first_data_block) / blocks_per_group;
+        uint32_t local = (block - first_data_block) % blocks_per_group;
+        uint64_t bitmap_offset = static_cast<uint64_t>(this-> group_descriptors[g].bg_block_bitmap_lo) * block_size;
+
+        uint8_t byte;
+        this-> image_file.clear();
+        this-> image_file.seekg(bitmap_offset + local / 8);
+        this-> image_file.read(reinterpret_cast<char *>(&byte), 1);
+
+        byte &= ~(1 << (local % 8));
+
+        this-> image_file.clear();
+        this-> image_file.seekp(bitmap_offset + local / 8);
+        this-> image_file.write(reinterpret_cast<char *>(&byte), 1);
+    }
+
+    uint32_t inodes_per_group = this-> sb.getInodesPerGroup();
+    uint32_t inode_group = (target_inode - 1) / inodes_per_group;
+    uint32_t inode_local = (target_inode - 1) % inodes_per_group;
+    uint64_t inode_bitmap_offset = static_cast<uint64_t>(this-> group_descriptors[inode_group].bg_inode_bitmap_lo) * block_size;
+
+    uint8_t byte;
+    this-> image_file.clear();
+    this-> image_file.seekg(inode_bitmap_offset + inode_local / 8);
+    this-> image_file.read(reinterpret_cast<char *>(&byte), 1);
+    
+    byte &= ~(1 << (inode_local % 8));
+
+    this-> image_file.clear();
+    this-> image_file.seekp(inode_bitmap_offset + inode_local / 8);
+    this-> image_file.write(reinterpret_cast<char *>(&byte), 1);
+    
+    vector<char> inode_buffer(this-> sb.getInodeSize(), 0);
+    Inode empty_inode{};
+    empty_inode.i_dtime = static_cast<uint32_t>(time(nullptr));
+    memcpy(inode_buffer.data(), &empty_inode, sizeof(Inode));
+    uint64_t inode_offset = this-> getInodeOffset(target_inode);
+    this-> image_file.clear();
+    this-> image_file.seekp(inode_offset);
+    this-> image_file.write(inode_buffer.data(), this-> sb.getInodeSize());
+
+    Inode parent_inode = this-> readInode(this-> current_inode);
+
+    if (parent_inode.i_links_count > 0) parent_inode.i_links_count -= 1;
+
+    uint64_t parent_offset = this-> getInodeOffset(this-> current_inode);
+    this-> image_file.clear();
+    this-> image_file.seekp(parent_offset);
+    this-> image_file.write(reinterpret_cast<char *>(&parent_inode), sizeof(Inode));
+
+    this-> image_file.flush();
+
+    cout << verde << "Diretório \"" << name << "\" removido com sucesso." << reset << endl;
 }
 
 bool Ext4::FileSystemManager::isRegularFile(const Inode& inode)

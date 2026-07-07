@@ -213,7 +213,7 @@ namespace Ext4
         void testi(uint32_t inode);
         void testb(uint32_t block);
         void attr(std::string path);
-        void rmdir();
+        void rmdir(std::string name);
         void ls();
         void pwd();
         void cd(std::string path);
