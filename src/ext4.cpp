@@ -151,6 +151,14 @@ uint32_t Ext4::SuperBlock::getInodeSize(){
     return this-> s_inode_size;
 }
 
+uint32_t Ext4::SuperBlock::getInodesCount(){
+    return this-> s_inodes_count;
+}
+
+uint32_t Ext4::SuperBlock::getBlocksCount(){
+    return this-> s_blocks_count_lo;
+}
+
 string Ext4::Inode::getFileType(){
     switch (this-> i_mode & 0xF000){
         case 0x1000:
@@ -287,7 +295,7 @@ bool Ext4::FileSystemManager::info()
 }
 
 void Ext4::FileSystemManager::testi(uint32_t inode){
-    if (inode == 0 || inode > this-> sb.getBlockGroupsCount() * this-> sb.getInodesPerGroup()){
+    if (inode == 0 || inode > this-> sb.getInodesCount()){
         cout << vermelho << "Erro: Inode fora dos limites." << reset << endl;
         return;
     }
@@ -318,7 +326,7 @@ void Ext4::FileSystemManager::testi(uint32_t inode){
 }
 
 void Ext4::FileSystemManager::testb(uint32_t block){
-    if (block == 0 || block > this-> sb.getBlockGroupsCount() * this-> sb.getBlocksPerGroup()) {
+    if (block < this-> sb.getFirstDataBlock() || block >= this-> sb.getBlocksCount()) {
         cout << vermelho << "Erro: Bloco fora dos limites." << reset << endl;
         return;
     }

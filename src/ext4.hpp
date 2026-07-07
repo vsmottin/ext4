@@ -80,9 +80,10 @@ namespace Ext4
         uint32_t getFirstDataBlock();
         uint32_t getInodeSize();
         uint32_t getFirstFreeInode();
-        
-        char *getRawUUID();          
+        uint32_t getInodesCount();
+        uint32_t getBlocksCount();
         uint32_t getDescriptorSize();
+        char *getRawUUID();
     };
 
     struct GroupDescriptor
