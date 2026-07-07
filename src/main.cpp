@@ -126,10 +126,21 @@ int main()
             if (current_name.empty() || new_name.empty())
             {
                 cout << vermelho << "Nomes inválidos" << reset << endl;
+                continue;
             }
             fs.rename(current_name, new_name);
         }
-
+        else if (comand == "rm")
+        {
+            string name;
+            cin >> name;
+            if (name.empty())
+            {
+                cout << vermelho << "Nome inválido" << reset << endl;
+                continue;
+            }
+            fs.rm(name);
+        }
         else if (comand == "exit")
         {
             break;

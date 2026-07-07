@@ -905,3 +905,176 @@ void Ext4::FileSystemManager::writeSuperBlockWithChecksum(vector<char> &buffer)
     this->image_file.seekp(1024);
     this->image_file.write(buffer.data(), 1024);
 }
+
+void Ext4::FileSystemManager::rm(string name)
+{
+    uint32_t inode_index = this->findInodeInDirectory(this->current_inode, name);
+    if (inode_index == 0)
+    {
+        cout << vermelho << "Arquivo não encontrado!" << endl;
+        return;
+    }
+
+    Inode inode = this->readInode(inode_index);
+    if (isDirectory(inode))
+    {
+        cout << vermelho << "Use rmdir para deletar diretórios!" << reset << endl;
+        return;
+    }
+    uint32_t group = this->getGroupFromInode(inode_index);
+    uint32_t dir_block = this->getInodeDataBlock(this->current_inode);
+    uint32_t block_size = this->sb.getBlockSize();
+
+    vector<char> dir_buffer(block_size);
+    this->image_file.seekg(static_cast<uint64_t>(dir_block) * block_size);
+    this->image_file.read(dir_buffer.data(), block_size);
+
+    uint32_t current_offset = 0;
+    DirEntry *prev_entry = nullptr;
+    bool dir_updated = false;
+
+    // O limite máximo é block_size - 12 por conta do DirEntryTail de checksum
+    while (current_offset < (block_size - 12))
+    {
+        DirEntry *current_entry = reinterpret_cast<DirEntry *>(&dir_buffer[current_offset]);
+
+        if (current_entry->rec_len < 8 || current_offset + current_entry->rec_len > block_size)
+            break;
+
+        if (current_entry->inode == inode_index)
+        {
+            if (prev_entry != nullptr)
+            {
+                // O anterior toma o espaço do atual
+                prev_entry->rec_len += current_entry->rec_len;
+            }
+            else
+            {
+                // Se for o primeiríssimo arquivo do bloco, o inode é zerado
+                current_entry->inode = 0;
+            }
+            dir_updated = true;
+            break;
+        }
+
+        prev_entry = current_entry;
+        current_offset += current_entry->rec_len;
+    }
+
+    if (!dir_updated)
+    {
+        cout << vermelho << "Erro ao atualizar a estrutura de diretórios." << reset << endl;
+        return;
+    }
+
+    this->writeDirBlockWithChecksum(this->current_inode, dir_block, dir_buffer);
+
+    vector<uint32_t> data_blocks = this->getInodeDataBlocks(inode_index);
+
+    // Atualiza o inode
+    inode.i_links_count = 0;
+    inode.i_mode = 0;
+    inode.i_dtime = time(nullptr);
+    memset(inode.i_block, 0, sizeof(inode.i_block));
+    std::vector<char> inode_buffer(sizeof(Inode));
+    memcpy(inode_buffer.data(), &inode, sizeof(Inode));
+
+    this->writeInodeWithChecksum(inode_index, inode_buffer);
+
+    for (uint32_t block_num : data_blocks)
+    {
+        if (block_num == 0)
+            continue;
+
+        // Descobre a qual grupo esse bloco pertencia
+        uint32_t block_group = (block_num - this->sb.getFirstDataBlock()) / this->sb.getBlocksPerGroup();
+        GroupDescriptor &b_desc = this->group_descriptors[block_group];
+        uint64_t block_bitmap_offset = static_cast<uint64_t>(b_desc.bg_block_bitmap_lo) * block_size;
+
+        vector<char> block_bitmap(block_size);
+        this->image_file.clear();
+        this->image_file.seekg(block_bitmap_offset);
+        this->image_file.read(block_bitmap.data(), block_size);
+
+        uint32_t local_block_idx = (block_num - this->sb.getFirstDataBlock()) % this->sb.getBlocksPerGroup();
+        uint32_t b_byte_idx = local_block_idx / 8;
+        uint32_t b_bit_idx = local_block_idx % 8;
+
+        // Desmarca o bloco no bitmap (muda para 0)
+        block_bitmap[b_byte_idx] &= ~(1 << b_bit_idx);
+
+        // Salva o bitmap de blocos modificado
+        this->image_file.clear();
+        this->image_file.seekp(block_bitmap_offset);
+        this->image_file.write(block_bitmap.data(), block_size);
+        this->updateBlockBitmapChecksum(block_group);
+
+        // Atualiza o contador de blocos livres do grupo dono daquele bloco
+        b_desc.bg_free_blocks_count_lo++;
+        this->updateGroupDescriptorChecksum(block_group);
+
+        // Sincroniza os contadores de bloco também na struct interna do Superbloco
+        this->sb.incrementFreeBlocksCount();
+    }
+    GroupDescriptor &desc = this->group_descriptors[group];
+    // Atualiza contador de inodes livres do grupo
+    desc.bg_free_inodes_count++;
+    
+    // Atualiza o bitmap de inodes
+    uint32_t inode_bitmap = desc.bg_inode_bitmap_lo;
+    uint64_t inode_bitmap_offset = static_cast<uint64_t>(inode_bitmap) * block_size;
+    this->image_file.clear();
+    this->image_file.seekg(inode_bitmap_offset);
+    vector<char> bytes(block_size);
+    this->image_file.read(bytes.data(), block_size);
+    uint32_t local_inode_index = (inode_index - 1) % this->sb.getInodesPerGroup();
+    uint16_t byte_offset = local_inode_index / 8;
+    uint16_t bit_offset = local_inode_index % 8;
+    bytes[byte_offset] &= ~(1 << bit_offset);
+    
+    this->image_file.seekp(inode_bitmap_offset);
+    this->image_file.write(bytes.data(), block_size);
+    
+    this->updateInodeBitmapChecksum(group);
+    this->updateGroupDescriptorChecksum(group);
+
+    this->writeGroupDescriptors();
+
+    // Atualiza o Superbloco
+    // Lemos os 1024 bytes originais do disco
+    vector<char> sb_buffer(1024);
+    this->image_file.clear();
+    this->image_file.seekg(1024);
+    this->image_file.read(sb_buffer.data(), 1024);
+
+    // Incrementa o s_free_inodes_count (offset 16) no buffer do disco
+    uint32_t *disk_free_inodes = reinterpret_cast<uint32_t *>(&sb_buffer[16]);
+    (*disk_free_inodes)++;
+
+    if (!data_blocks.empty())
+    {
+        uint32_t *disk_free_blocks = reinterpret_cast<uint32_t *>(&sb_buffer[12]);
+        (*disk_free_blocks) += data_blocks.size();
+    }
+    this->writeSuperBlockWithChecksum(sb_buffer);
+    this->image_file.flush();
+
+    cout << verde << "Arquivo '" << name << "' deletado com sucesso!" << reset << endl;
+}
+
+void Ext4::FileSystemManager::writeGroupDescriptors()
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    
+    // O offset depende do tamanho do bloco no Ext4
+    uint64_t gd_offset = (block_size == 1024) ? 2048 : block_size;
+
+    this->image_file.clear();
+    this->image_file.seekp(gd_offset);
+
+    // Escreve todo o vetor de descriptors de volta para o disco
+    this->image_file.write(
+        reinterpret_cast<const char*>(this->group_descriptors.data()), 
+        this->group_descriptors.size() * this->sb.getDescriptorSize()
+    );
+}

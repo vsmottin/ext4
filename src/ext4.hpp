@@ -73,6 +73,7 @@ namespace Ext4
         std::string getErrorBehavior();
         void superBlockStats();
         void decrementFreeInodesCount();
+        void incrementFreeBlocksCount();
         uint32_t getBlockSize();
         uint32_t getBlockGroupsCount();
         uint32_t getInodesPerGroup();
@@ -218,6 +219,7 @@ namespace Ext4
         void writeInodeWithChecksum(uint32_t inode_num, std::vector<char>& inode_buf);
         void writeDirBlockWithChecksum(uint32_t dir_inode_num, uint32_t block_num, std::vector<char>& buffer);
         void writeSuperBlockWithChecksum(std::vector<char> &buffer);
+        void writeGroupDescriptors();
 
     public:
         bool setImage(std::string fileName);
@@ -234,6 +236,7 @@ namespace Ext4
         void mkdir(std::string name);
         void cat(std::string name);
         void rename(std::string name, std::string newName);
+        void rm(std::string name);
     };
 }
 
