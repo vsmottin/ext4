@@ -222,6 +222,11 @@ namespace Ext4
         void writeSuperBlockWithChecksum(std::vector<char> &buffer);
         void writeGroupDescriptors();
 
+        void freeBlockBit(uint32_t block_num);
+        void freeInodeBit(uint32_t inode_num);
+        std::vector<Extent> groupBlocksIntoExtents(const std::vector<uint32_t>& blocks);
+        bool writeExtentsToInode(Inode& inode, const std::vector<Extent>& extents);
+
     public:
         bool setImage(std::string fileName);
         bool info();
@@ -238,6 +243,7 @@ namespace Ext4
         void cat(std::string name);
         void rename(std::string name, std::string newName);
         void rm(std::string name);
+        void exportFile(std::string host_path, std::string dest_name);
     };
 }
 
