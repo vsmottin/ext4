@@ -1,5 +1,6 @@
 #include "ext4.hpp"
 #include "cores.h"
+#include "utils.hpp"
 #include "checksum/ext4checksum.h"
 #include <fstream>
 #include <iostream>
@@ -382,26 +383,6 @@ uint32_t Ext4::FileSystemManager::findInodeInDirectory(uint32_t dir_inode, const
     }
 
     return 0;
-}
-
-static std::vector<std::string> tokenizePath(const std::string &path)
-{
-    std::vector<std::string> tokens;
-    std::string component;
-    for (size_t i = 0; i <= path.size(); i++)
-    {
-        if (i == path.size() || path[i] == '/')
-        {
-            if (!component.empty() && component != ".")
-                tokens.push_back(component);
-            component.clear();
-        }
-        else
-        {
-            component += path[i];
-        }
-    }
-    return tokens;
 }
 
 void Ext4::FileSystemManager::cd(std::string path)
