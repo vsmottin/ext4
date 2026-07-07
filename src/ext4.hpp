@@ -72,7 +72,7 @@ namespace Ext4
         std::string getCreatorOS();
         std::string getErrorBehavior();
         void superBlockStats();
-
+        void decrementFreeInodesCount();
         uint32_t getBlockSize();
         uint32_t getBlockGroupsCount();
         uint32_t getInodesPerGroup();
@@ -196,8 +196,7 @@ namespace Ext4
         std::vector<GroupDescriptor> group_descriptors;
         uint32_t current_inode;
         std::string current_path;
-
-        std::vector<uint32_t> getDataBlocks(const Inode& inode);
+        
         Inode readInode(uint32_t num);
         Inode resolveNameToInode(const std::string& path);
         uint64_t getInodeOffset(uint32_t inode_num);
@@ -210,6 +209,7 @@ namespace Ext4
         uint32_t allocateFreeBlock(uint32_t preferred_group);
         bool isRegularFile(const Inode& inode);
         uint64_t getInodeSizeBytes(const Inode& inode);
+        uint32_t getGroupFromInode(uint32_t inode_num);
 
         uint64_t getGroupDescriptorOffset(uint32_t group);
         void updateBlockBitmapChecksum(uint32_t group);
@@ -217,6 +217,7 @@ namespace Ext4
         void updateGroupDescriptorChecksum(uint32_t group);
         void writeInodeWithChecksum(uint32_t inode_num, std::vector<char>& inode_buf);
         void writeDirBlockWithChecksum(uint32_t dir_inode_num, uint32_t block_num, std::vector<char>& buffer);
+        void writeSuperBlockWithChecksum(std::vector<char> &buffer);
 
     public:
         bool setImage(std::string fileName);
@@ -232,6 +233,7 @@ namespace Ext4
         std::string getCurrentPath();
         void mkdir(std::string name);
         void cat(std::string name);
+        void rename(std::string name, std::string newName);
     };
 }
 
