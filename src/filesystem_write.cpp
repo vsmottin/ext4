@@ -1,5 +1,6 @@
 #include "ext4.hpp"
 #include "cores.h"
+#include "utils.hpp"
 #include "checksum/ext4checksum.h"
 #include <fstream>
 #include <iostream>
@@ -38,7 +39,7 @@ bool Ext4::FileSystemManager::setImage(string fileName)
     uint32_t block_groupsCount = this->sb.getBlockGroupsCount();
     this->group_descriptors.resize(block_groupsCount);
     file.read(reinterpret_cast<char *>(this->group_descriptors.data()), sizeof(GroupDescriptor) * block_groupsCount);
-    
+
     // Define o diretório raiz (Inode 2) como o ponto de partida inicial do sistema
     this->current_inode = 2;
     this->current_path = "/";
@@ -923,7 +924,23 @@ void Ext4::FileSystemManager::writeSuperBlockWithChecksum(vector<char> &buffer)
 
 void Ext4::FileSystemManager::rm(string name)
 {
-    uint32_t inode_index = this->findInodeInDirectory(this->current_inode, name);
+    vector<string> path = tokenizePath(name);
+    if (path.size() > 2)
+    {
+        cout << vermelho << "Esse comando não lida com múltiplos diretórios" << reset << endl;
+        return;
+    }
+
+    string file_name = path[0];
+    uint32_t inode_dir = this->current_inode;
+    // Caso exista um diretório no caminho inserido
+    if (path.size() > 1)
+    {
+        inode_dir = this->findInodeInDirectory(this->current_inode, path[0]);
+        file_name = path[1];
+    }
+
+    uint32_t inode_index = this->findInodeInDirectory(inode_dir, file_name);
     if (inode_index == 0)
     {
         cout << vermelho << "Arquivo não encontrado!" << endl;
@@ -937,7 +954,7 @@ void Ext4::FileSystemManager::rm(string name)
         return;
     }
     uint32_t group = this->getGroupFromInode(inode_index);
-    uint32_t dir_block = this->getInodeDataBlock(this->current_inode);
+    uint32_t dir_block = this->getInodeDataBlock(inode_dir);
     uint32_t block_size = this->sb.getBlockSize();
 
     vector<char> dir_buffer(block_size);
@@ -982,7 +999,7 @@ void Ext4::FileSystemManager::rm(string name)
         return;
     }
 
-    this->writeDirBlockWithChecksum(this->current_inode, dir_block, dir_buffer);
+    this->writeDirBlockWithChecksum(inode_dir, dir_block, dir_buffer);
 
     vector<uint32_t> data_blocks = this->getInodeDataBlocks(inode_index);
 
