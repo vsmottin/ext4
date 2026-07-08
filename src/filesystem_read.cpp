@@ -72,6 +72,10 @@ bool Ext4::FileSystemManager::info()
     return true;
 }
 
+/**
+ * Verifica se um inode está livre ou ocupado.
+ * @param inode: número do inode a ser verificado
+ */
 void Ext4::FileSystemManager::testi(uint32_t inode)
 {
     if (inode == 0 || inode > this->sb.getInodesCount())
@@ -108,6 +112,10 @@ void Ext4::FileSystemManager::testi(uint32_t inode)
     }
 }
 
+/**
+ * Verifica se um bloco está livre ou ocupado.
+ * @param block: número do bloco a ser verificado
+ */
 void Ext4::FileSystemManager::testb(uint32_t block)
 {
     if (block < this->sb.getFirstDataBlock() || block >= this->sb.getBlocksCount())
@@ -227,6 +235,10 @@ uint32_t Ext4::FileSystemManager::getInodeDataBlock(uint32_t inode_num)
     return extent_leaf.ee_start_lo;
 }
 
+/**
+ * Exibe os atributos de um arquivo ou diretório.
+ * @param path: caminho do arquivo ou diretório a ser verificado
+ */
 void Ext4::FileSystemManager::attr(string path)
 {
     Inode inode = this->resolveNameToInode(path);
@@ -242,7 +254,7 @@ void Ext4::FileSystemManager::attr(string path)
     for (int i = 8; i >= 0; i--)
     {
         bool on = (inode.i_mode & (1 << i)) != 0;
-        permissions += on ? letters[2 - (i % 3)] : '-';
+        permissions += on ? letters[2 - (i % 3)] : '-'; //mapeia para a letra correspondente.
     }
 
     uint64_t size = (static_cast<uint64_t>(inode.i_size_high) << 32) | inode.i_size_lo;

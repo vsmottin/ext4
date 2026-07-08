@@ -583,6 +583,10 @@ void Ext4::FileSystemManager::writeDirBlockWithChecksum(uint32_t dir_inode_num, 
     this->image_file.write(buffer.data(), block_size);
 }
 
+/**
+ * Remove um diretório, se estiver vazio.
+ * @param name: nome do diretório a ser removido
+ */
 void Ext4::FileSystemManager::rmdir(string name)
 {
     if (name.empty() || name == "." || name == "..")
@@ -661,7 +665,7 @@ void Ext4::FileSystemManager::rmdir(string name)
 
                 if (prev != nullptr)
                 {
-                    prev->rec_len += entry->rec_len;
+                    prev->rec_len += entry->rec_len; //mescla o rec_len do anterior com o removido.
                 }
                 else
                 {
