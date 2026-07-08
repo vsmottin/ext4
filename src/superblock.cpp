@@ -211,3 +211,15 @@ void Ext4::SuperBlock::decrementFreeInodesCount(){
 void Ext4::SuperBlock::incrementFreeBlocksCount(){
     this->s_free_blocks_count_lo++;
 }
+
+void Ext4::SuperBlock::adjustFreeBlocksCount(int32_t delta)
+{
+    this->s_free_blocks_count_lo = static_cast<uint32_t>(
+        static_cast<int64_t>(this->s_free_blocks_count_lo) + delta);
+}
+
+void Ext4::SuperBlock::adjustFreeInodesCount(int32_t delta)
+{
+    this->s_free_inodes_count = static_cast<uint32_t>(
+        static_cast<int64_t>(this->s_free_inodes_count) + delta);
+}
