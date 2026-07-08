@@ -1,3 +1,11 @@
+/**
+ * @file inode.cpp
+ * @author Caroline Lau, Maria Bambini e Victória Mottin
+ * @brief Implementa a estrutura Inode e métodos auxiliares para interpretação de seus campos (modo, tipo de arquivo, tamanho, timestamps, etc.).
+ * @date 2026-07-08
+ * 
+ */
+
 #include "ext4.hpp"
 #include <iostream>
 #include <string>

@@ -1,3 +1,11 @@
+/**
+ * @file main.cpp
+ * @author Caroline Lau, Maria Bambini e Victória Mottin
+ * @brief Ponto de entrada do ext4shell; inicializa o FileSystemManager a partir da imagem informada e implementa o loop de leitura e execução de comandos do shell interativo.
+ * @date 2026-07-08
+ * 
+ */
+
 #include <iostream>
 #ifdef _WIN32
 #include <windows.h>

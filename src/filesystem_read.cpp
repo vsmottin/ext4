@@ -1,3 +1,11 @@
+/**
+ * @file filesystem_read.cpp
+ * @author Caroline Lau, Maria Bambini e Victória Mottin
+ * @brief Implementa as operações de leitura do sistema de arquivos.
+ * @date 2026-07-08
+ * 
+ */
+
 #include "ext4.hpp"
 #include "cores.h"
 #include "utils.hpp"
@@ -722,8 +730,6 @@ vector<Ext4::Extent> Ext4::FileSystemManager::groupBlocksIntoExtents(const vecto
 
 bool Ext4::FileSystemManager::writeExtentsToInode(Inode &inode, const vector<Extent> &extents)
 {
-    // Limitação conhecida (relatório): só é suportado extents "inline" no próprio inode
-    // (eh_depth == 0), que cabem no máximo 4 no espaço de i_block[].
     if (extents.size() > 4)
         return false;
 

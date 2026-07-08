@@ -1,3 +1,11 @@
+/**
+ * @file filesystem_read.cpp
+ * @author Caroline Lau, Maria Bambini e Victória Mottin
+ * @brief Implementa as operações de escrita do sistema de arquivos.
+ * @date 2026-07-08
+ * 
+ */
+
 #include "ext4.hpp"
 #include "cores.h"
 #include "utils.hpp"

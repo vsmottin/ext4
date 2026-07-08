@@ -1,3 +1,11 @@
+/**
+ * @file superblock.cpp
+ * @author Caroline Lau, Maria Bambini e Victória Mottin
+ * @brief Implementa a estrutura SuperBlock e métodos de acesso e ajuste de seus campos (tamanho de bloco, contadores de inodes/blocos livres, UUID, etc.).
+ * @date 2026-07-08
+ * 
+ */
+
 #include "ext4.hpp"
 #include "cores.h"
 #include "checksum/ext4checksum.h"

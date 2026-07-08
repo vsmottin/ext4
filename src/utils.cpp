@@ -1,3 +1,11 @@
+/**
+ * @file utils.cpp
+ * @author Caroline Lau, Maria Bambini e Victória Mottin
+ * @brief Implementa funções utilitárias de suporte, como tokenização de caminhos (tokenizePath) e outras rotinas auxiliares compartilhadas entre os módulos.
+ * @date 2026-07-08
+ * 
+ */
+
 #include <string>
 #include <cctype>
 #include <vector>
