@@ -18,6 +18,11 @@ std::string trim(const std::string& str) {
     return str.substr(inicio, fim - inicio);
 }
 
+/**
+ * @brief Divide uma string de caminho (path) em seus componentes individuais.
+ * @param path: caminho a ser tokenizado (absoluto ou relativo)
+ * @returns vetor de strings, cada uma representando um componente do caminho.
+ */
 std::vector<std::string> tokenizePath(const std::string &path)
 {
     std::vector<std::string> tokens;

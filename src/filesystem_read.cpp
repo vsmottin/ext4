@@ -284,6 +284,12 @@ void Ext4::FileSystemManager::pwd()
     cout << this->current_path << endl;
 }
 
+
+/**
+ * @brief Lê a estrutura completa de um inode diretamente da imagem, a partir do seu número.
+ * @param inode_num: número do inode a ser lido (1-indexed, conforme convenção ext4)
+ * @returns struct Inode preenchida com os dados lidos do disco
+ */
 Ext4::Inode Ext4::FileSystemManager::readInode(uint32_t inode_num)
 {
     Inode inode{};
@@ -299,6 +305,13 @@ bool Ext4::FileSystemManager::isDirectory(const Inode &inode)
     return (inode.i_mode & 0xF000) == 0x4000;
 }
 
+/**
+ * @brief Percorre um nó da árvore de extents que não está inline no inode (eh_depth > 0), lendo o ExtentHeader 
+ * gravado em um bloco de disco e acumulando todos os blocos de dados apontados.
+ * @param block_num: número do bloco de disco onde o próximo ExtentHeader está gravado
+ * @param blocks: vetor onde os números de bloco de dados encontrados são acumulados
+ * @returns void
+ */
 void Ext4::FileSystemManager::collectExtentBlocks(uint32_t block_num, std::vector<uint32_t> &blocks)
 {
     ExtentHeader header;
@@ -332,6 +345,11 @@ void Ext4::FileSystemManager::collectExtentBlocks(uint32_t block_num, std::vecto
     }
 }
 
+/**
+ * @brief Obtém todos os blocos de dados associados a um inode, percorrendo sua árvore de extents a partir do próprio inode (i_block[]). 
+ * @param inode_num: número do inode cujos blocos de dados serão obtidos
+ * @returns vetor com os números de todos os blocos de dados do inode
+ */
 std::vector<uint32_t> Ext4::FileSystemManager::getInodeDataBlocks(uint32_t inode_num)
 {
     std::vector<uint32_t> blocks;
@@ -365,6 +383,12 @@ std::vector<uint32_t> Ext4::FileSystemManager::getInodeDataBlocks(uint32_t inode
     return blocks;
 }
 
+/**
+ * @brief Procura por uma entrada de nome específico dentro de um diretório.
+ * @param dir_inode: número do inode do diretório onde a busca será realizada
+ * @param name: nome do arquivo ou subdiretório procurado
+ * @returns número do inode correspondente ao nome encontrado, ou 0 caso o nome não exista no diretório
+ */
 uint32_t Ext4::FileSystemManager::findInodeInDirectory(uint32_t dir_inode, const std::string &name)
 {
     uint32_t block_size = this->sb.getBlockSize();
@@ -398,6 +422,12 @@ uint32_t Ext4::FileSystemManager::findInodeInDirectory(uint32_t dir_inode, const
     return 0;
 }
 
+/**
+ * @brief Implementa o comando cd, alterando o diretório de trabalho atual do shell (current_inode e current_path). 
+ * Resolve caminhos absolutos e relativos, suportando múltiplos componentes em um único comando.
+ * @param path: caminho a ser acessado, absoluto ou relativo ao diretório atual
+ * @returns void
+ */
 void Ext4::FileSystemManager::cd(std::string path)
 {
     if (path.empty())
