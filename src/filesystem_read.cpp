@@ -10,6 +10,7 @@
 #include <ctime>
 #include <vector>
 #include <set>
+#include <cerrno>
 
 using namespace std;
 
@@ -530,4 +531,194 @@ uint64_t Ext4::FileSystemManager::getGroupDescriptorOffset(uint32_t group)
     uint32_t block_size = this->sb.getBlockSize();
     uint32_t gdt_start_block = (block_size == 1024) ? 2 : 1;
     return static_cast<uint64_t>(gdt_start_block) * block_size + static_cast<uint64_t>(group) * sizeof(GroupDescriptor);
+}
+
+void Ext4::FileSystemManager::freeBlockBit(uint32_t block_num)
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    uint32_t blocks_per_group = this->sb.getBlocksPerGroup();
+    uint32_t first_data_block = this->sb.getFirstDataBlock();
+
+    uint32_t group = (block_num - first_data_block) / blocks_per_group;
+    uint32_t local_index = (block_num - first_data_block) % blocks_per_group;
+
+    GroupDescriptor &desc = this->group_descriptors[group];
+    uint64_t bitmap_offset = static_cast<uint64_t>(desc.bg_block_bitmap_lo) * block_size;
+
+    uint32_t byte_index = local_index / 8;
+    uint8_t bit_index = local_index % 8;
+
+    this->image_file.clear();
+    this->image_file.seekg(bitmap_offset + byte_index);
+    char byte;
+    this->image_file.read(&byte, 1);
+    byte &= ~(1 << bit_index);
+
+    this->image_file.clear();
+    this->image_file.seekp(bitmap_offset + byte_index);
+    this->image_file.write(&byte, 1);
+}
+
+void Ext4::FileSystemManager::freeInodeBit(uint32_t inode_num)
+{
+    uint32_t block_size = this->sb.getBlockSize();
+    uint32_t inodes_per_group = this->sb.getInodesPerGroup();
+
+    uint32_t group = (inode_num - 1) / inodes_per_group;
+    uint32_t local_index = (inode_num - 1) % inodes_per_group;
+
+    GroupDescriptor &desc = this->group_descriptors[group];
+    uint64_t bitmap_offset = static_cast<uint64_t>(desc.bg_inode_bitmap_lo) * block_size;
+
+    uint32_t byte_index = local_index / 8;
+    uint8_t bit_index = local_index % 8;
+
+    this->image_file.clear();
+    this->image_file.seekg(bitmap_offset + byte_index);
+    char byte;
+    this->image_file.read(&byte, 1);
+    byte &= ~(1 << bit_index);
+
+    this->image_file.clear();
+    this->image_file.seekp(bitmap_offset + byte_index);
+    this->image_file.write(&byte, 1);
+}
+
+vector<Ext4::Extent> Ext4::FileSystemManager::groupBlocksIntoExtents(const vector<uint32_t> &blocks)
+{
+    vector<Extent> extents;
+    if (blocks.empty())
+        return extents;
+
+    uint32_t logical_block = 0;
+    uint32_t start_physical = blocks[0];
+    uint16_t run_length = 1;
+
+    for (size_t i = 1; i < blocks.size(); i++)
+    {
+        if (blocks[i] == start_physical + run_length)
+        {
+            run_length++;
+        }
+        else
+        {
+            Extent e{};
+            e.ee_block = logical_block;
+            e.ee_len = run_length;
+            e.ee_start_hi = 0;
+            e.ee_start_lo = start_physical;
+            extents.push_back(e);
+
+            logical_block += run_length;
+            start_physical = blocks[i];
+            run_length = 1;
+        }
+    }
+
+    Extent last{};
+    last.ee_block = logical_block;
+    last.ee_len = run_length;
+    last.ee_start_hi = 0;
+    last.ee_start_lo = start_physical;
+    extents.push_back(last);
+
+    return extents;
+}
+
+bool Ext4::FileSystemManager::writeExtentsToInode(Inode &inode, const vector<Extent> &extents)
+{
+    // Limitação conhecida (relatório): só é suportado extents "inline" no próprio inode
+    // (eh_depth == 0), que cabem no máximo 4 no espaço de i_block[].
+    if (extents.size() > 4)
+        return false;
+
+    ExtentHeader header{};
+    header.eh_magic = 0xF30A;
+    header.eh_entries = static_cast<uint16_t>(extents.size());
+    header.eh_max = 4;
+    header.eh_depth = 0;
+    header.eh_generation = 0;
+    memcpy(&inode.i_block[0], &header, sizeof(ExtentHeader));
+
+    for (size_t i = 0; i < extents.size(); i++)
+    {
+        memcpy(&inode.i_block[3 + i * 3], &extents[i], sizeof(Extent));
+    }
+
+    return true;
+}
+
+void Ext4::FileSystemManager::exportFile(string ext4_name, string host_path)
+{
+    if (ext4_name.empty())
+    {
+        cout << vermelho << "Erro: nome de arquivo inválido." << reset << endl;
+        return;
+    }
+
+    uint32_t file_inode_num = this->findInodeInDirectory(this->current_inode, ext4_name);
+    if (file_inode_num == 0)
+    {
+        cout << vermelho << "Erro: \"" << ext4_name << "\" não existe na imagem." << reset << endl;
+        return;
+    }
+
+    Inode file_inode = this->readInode(file_inode_num);
+
+    if (!this->isRegularFile(file_inode))
+    {
+        cout << vermelho << "Erro: \"" << ext4_name << "\" não é um arquivo regular." << reset << endl;
+        return;
+    }
+
+    uint64_t file_size = this->getInodeSizeBytes(file_inode);
+
+    ofstream out_file(host_path, ios::binary | ios::trunc);
+    if (!out_file)
+    {
+        cout << vermelho << "Erro: não foi possível criar \"" << host_path
+             << "\" no sistema local (" << strerror(errno) << ")." << reset << endl;
+        return;
+    }
+
+    if (file_size == 0)
+    {
+        out_file.close();
+        cout << verde << "Arquivo \"" << ext4_name << "\" exportado (vazio) para \"" << host_path << "\"." << reset << endl;
+        return;
+    }
+
+    uint32_t block_size = this->sb.getBlockSize();
+    vector<uint32_t> blocks = this->getInodeDataBlocks(file_inode_num);
+
+    if (blocks.empty())
+    {
+        cout << vermelho << "Erro: arquivo não possui blocos de dados válidos." << reset << endl;
+        return;
+    }
+
+    uint64_t bytes_remaining = file_size;
+    vector<char> buffer(block_size);
+
+    for (uint32_t block : blocks)
+    {
+        if (bytes_remaining == 0)
+            break;
+
+        uint32_t bytes_to_read = (bytes_remaining < block_size)
+            ? static_cast<uint32_t>(bytes_remaining)
+            : block_size;
+
+        this->image_file.clear();
+        this->image_file.seekg(static_cast<uint64_t>(block) * block_size);
+        this->image_file.read(buffer.data(), bytes_to_read);
+
+        out_file.write(buffer.data(), bytes_to_read);
+
+        bytes_remaining -= bytes_to_read;
+    }
+
+    out_file.close();
+    cout << verde << "Arquivo \"" << ext4_name << "\" exportado com sucesso para \"" << host_path << "\" ("
+         << file_size << " bytes)." << reset << endl;
 }

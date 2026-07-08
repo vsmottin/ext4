@@ -148,6 +148,17 @@ int main()
             }
             fs.rm(name);
         }
+        else if (comand == "export")
+        {
+            string ext4_name, host_path;
+            cin >> ext4_name >> host_path;
+            if (ext4_name.empty() || host_path.empty())
+            {
+                cout << vermelho << "Uso: export <nome_na_imagem> <caminho_destino_local>" << reset << endl;
+                continue;
+            }
+            fs.exportFile(ext4_name, host_path);
+        }
         else if (comand == "exit")
         {
             break;
