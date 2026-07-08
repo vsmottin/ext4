@@ -1107,8 +1107,19 @@ void Ext4::FileSystemManager::rm(string name)
     inode.i_mode = 0;
     inode.i_dtime = time(nullptr);
     memset(inode.i_block, 0, sizeof(inode.i_block));
-    std::vector<char> inode_buffer(sizeof(Inode));
-    memcpy(inode_buffer.data(), &inode, sizeof(Inode));
+    uint32_t inode_size = this->sb.getInodeSize();
+    std::vector<char> inode_buffer(inode_size, 0);
+
+    this->image_file.clear();
+    this->image_file.seekg(this->getInodeOffset(inode_index));
+    this->image_file.read(inode_buffer.data(), inode_size);
+
+    Inode *inode_to_remove = reinterpret_cast<Inode *>(inode_buffer.data());
+
+    inode_to_remove->i_links_count = 0;
+    inode_to_remove->i_mode = 0;
+    inode_to_remove->i_dtime = static_cast<uint32_t>(time(nullptr));
+    memset(inode_to_remove->i_block, 0, sizeof(inode_to_remove->i_block));
 
     this->writeInodeWithChecksum(inode_index, inode_buffer);
 
@@ -1171,23 +1182,9 @@ void Ext4::FileSystemManager::rm(string name)
 
     this->writeGroupDescriptors();
 
-    // Atualiza o Superbloco
-    // Lemos os 1024 bytes originais do disco
-    vector<char> sb_buffer(1024);
-    this->image_file.clear();
-    this->image_file.seekg(1024);
-    this->image_file.read(sb_buffer.data(), 1024);
+    this->sb.adjustFreeInodesCount(1);
 
-    // Incrementa o s_free_inodes_count (offset 16) no buffer do disco
-    uint32_t *disk_free_inodes = reinterpret_cast<uint32_t *>(&sb_buffer[16]);
-    (*disk_free_inodes)++;
-
-    if (!data_blocks.empty())
-    {
-        uint32_t *disk_free_blocks = reinterpret_cast<uint32_t *>(&sb_buffer[12]);
-        (*disk_free_blocks) += data_blocks.size();
-    }
-    this->writeSuperBlockWithChecksum(sb_buffer);
+    this->writeSuperBlockToDisk();
     this->image_file.flush();
 
     cout << verde << "Arquivo '" << name << "' deletado com sucesso!" << reset << endl;
