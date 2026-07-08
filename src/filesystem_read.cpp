@@ -508,6 +508,12 @@ uint64_t Ext4::FileSystemManager::getInodeSizeBytes(const Inode &inode)
     return (static_cast<uint64_t>(inode.i_size_high) << 32) | inode.i_size_lo;
 }
 
+/**
+ * @brief Implementa o comando cat, exibindo no terminal o conteúdo de um arquivo regular presente no diretório atual. Localiza o inode do arquivo pelo
+ * nome, valida que se trata de um arquivo regular (não diretório), obtém todos os seus blocos de dados via getInodeDataBlocks e os lê sequencialmente.
+ * @param name: nome do arquivo, relativo ao diretório atual, a ser exibido
+ * @returns void (o conteúdo do arquivo é escrito diretamente em cout)
+ */
 void Ext4::FileSystemManager::cat(string name)
 {
     if (name.empty())
@@ -692,6 +698,15 @@ bool Ext4::FileSystemManager::writeExtentsToInode(Inode &inode, const vector<Ext
     return true;
 }
 
+/**
+ * @brief Implementa o comando export, extraindo um arquivo de dentro da imagem ext4 e gravando seu conteúdo em um arquivo no sistema de
+ * arquivos local (host). Localiza o inode do arquivo pelo nome dentro do diretório atual, valida que se trata de um arquivo regular, e então lê
+ * todos os seus blocos de dados (via getInodeDataBlocks) sequencialmente, escrevendo-os no arquivo de destino local.
+ * @param ext4_name: nome do arquivo dentro da imagem, relativo ao diretório atual, a ser exportado
+ * @param host_path: caminho completo (incluindo nome do arquivo) no sistema de arquivos local onde o conteúdo exportado será salvo
+ * @returns void (cria/sobrescreve o arquivo em host_path com o conteúdo lido da imagem; 
+ * em caso de erro, retorna sem criar/alterar o arquivo de destino)
+ */
 void Ext4::FileSystemManager::exportFile(string ext4_name, string host_path)
 {
     if (ext4_name.empty())

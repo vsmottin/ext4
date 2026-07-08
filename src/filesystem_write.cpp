@@ -228,6 +228,12 @@ void Ext4::FileSystemManager::touch(string path)
     cout << verde << "Arquivo '" << path << "' criado com sucesso!" << reset << endl;
 }
 
+/**
+ * @brief Aloca o primeiro inode livre disponível dentro de um grupo de blocos específico, 
+ * varrendo bit a bit o bitmap de inodes do grupo até encontrar uma posição livre.
+ * @param group: número do grupo de blocos onde o inode deve ser alocado
+ * @returns número do inode alocado (1-indexed), ou 0 caso não haja inodes livres disponíveis nesse grupo
+ */
 uint32_t Ext4::FileSystemManager::allocateFreeInode(uint32_t group)
 {
     uint32_t block_size = this->sb.getBlockSize();
@@ -279,6 +285,12 @@ uint32_t Ext4::FileSystemManager::allocateFreeInode(uint32_t group)
     return 0;
 }
 
+/**
+ * @brief Aloca o primeiro bloco de dados livre disponível, priorizando o grupo indicado em preferred_group e, 
+ * caso esse grupo esteja cheio, buscando nos demais grupos em sequência circular. 
+ * @param preferred_group: grupo de blocos onde a busca deve começar
+ * @returns número absoluto do bloco alocado, ou 0 caso não haja blocos livres disponíveis em nenhum grupo do sistema de arquivos
+ */
 uint32_t Ext4::FileSystemManager::allocateFreeBlock(uint32_t preferred_group)
 {
     uint32_t block_size = this->sb.getBlockSize();
@@ -322,6 +334,14 @@ uint32_t Ext4::FileSystemManager::allocateFreeBlock(uint32_t preferred_group)
     return 0;
 }
 
+/**
+ * @brief Implementa o comando mkdir, criando um novo diretório vazio dentro do diretório atual. 
+ * @note Limitação conhecida: assume que o diretório atual (pai) possui todo o
+ *       seu conteúdo em um único bloco/extent; diretórios que já ocupem mais
+ *       de um bloco não são suportados por esta implementação.
+ * @param name: nome do novo diretório a ser criado, relativo ao diretório atual
+ * @returns void (cria o diretório na imagem; em caso de erro, retorna sem alterar a imagem)
+ */
 void Ext4::FileSystemManager::mkdir(string name)
 {
     if (name.empty() || name.length() > 255)
