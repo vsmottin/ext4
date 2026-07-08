@@ -10,6 +10,7 @@
 #include <ctime>
 #include <vector>
 #include <set>
+#include <map>
 
 using namespace std;
 
@@ -262,6 +263,14 @@ uint32_t Ext4::FileSystemManager::allocateFreeInode(uint32_t group)
                 desc.bg_free_inodes_count--;
             }
 
+            uint32_t unused_start = inodes_per_group - desc.bg_itable_unused_lo;
+            if (i >= unused_start)
+            {
+                uint16_t new_unused = static_cast<uint16_t>(inodes_per_group - (i + 1));
+                if (new_unused < desc.bg_itable_unused_lo)
+                    desc.bg_itable_unused_lo = new_unused;
+            }
+
             this->updateGroupDescriptorChecksum(group);
 
             return inode_number;
@@ -302,7 +311,7 @@ uint32_t Ext4::FileSystemManager::allocateFreeBlock(uint32_t preferred_group)
                 this->image_file.seekp(bitmap_offset);
                 this->image_file.write(bitmap.data(), block_size);
 
-                this->updateInodeBitmapChecksum(group);
+                this->updateBlockBitmapChecksum(group);
                 if (desc.bg_free_blocks_count_lo > 0)
                     desc.bg_free_blocks_count_lo--;
                 this->updateGroupDescriptorChecksum(group);
@@ -313,7 +322,6 @@ uint32_t Ext4::FileSystemManager::allocateFreeBlock(uint32_t preferred_group)
     return 0;
 }
 
-// ajustar checksum
 void Ext4::FileSystemManager::mkdir(string name)
 {
     if (name.empty() || name.length() > 255)
@@ -389,6 +397,45 @@ void Ext4::FileSystemManager::mkdir(string name)
         return;
     }
 
+    uint32_t inode_size = this->sb.getInodeSize();
+    vector<char> new_inode_buffer(inode_size, 0);
+
+    uint16_t i_mode = 0x41ED;
+    memcpy(&new_inode_buffer[0x00], &i_mode, 2);
+
+    uint32_t i_size_lo = block_size;
+    memcpy(&new_inode_buffer[0x04], &i_size_lo, 4);
+
+    uint16_t i_links_count = 2;
+    memcpy(&new_inode_buffer[0x1A], &i_links_count, 2);
+
+    uint32_t i_blocks_lo = block_size / 512;
+    memcpy(&new_inode_buffer[0x1C], &i_blocks_lo, 4);
+
+    uint32_t i_flags = 0x80000;
+    memcpy(&new_inode_buffer[0x20], &i_flags, 4);
+
+    ExtentHeader header{};
+    header.eh_magic = 0xF30A;
+    header.eh_entries = 1;
+    header.eh_max = 4;
+    header.eh_depth = 0;
+    memcpy(&new_inode_buffer[0x28], &header, sizeof(ExtentHeader));
+
+    Extent extent{};
+    extent.ee_block = 0;
+    extent.ee_len = 1;
+    extent.ee_start_hi = 0;
+    extent.ee_start_lo = new_block_num;
+    memcpy(&new_inode_buffer[0x28 + sizeof(ExtentHeader)], &extent, sizeof(Extent));
+
+    if (inode_size > 128)
+    {
+        uint16_t extra_isize = 32;
+        memcpy(&new_inode_buffer[0x80], &extra_isize, 2);
+    }
+    this->writeInodeWithChecksum(new_inode_num, new_inode_buffer);
+
     vector<char> new_dir_block(block_size, 0);
 
     DirEntry *dot = reinterpret_cast<DirEntry *>(&new_dir_block[0]);
@@ -400,50 +447,24 @@ void Ext4::FileSystemManager::mkdir(string name)
 
     DirEntry *dotdot = reinterpret_cast<DirEntry *>(&new_dir_block[12]);
     dotdot->inode = this->current_inode;
-    dotdot->rec_len = block_size - 12;
+    dotdot->rec_len = block_size - 12 - 12;
     dotdot->name_len = 2;
     dotdot->file_type = 2;
     dotdot->name[0] = '.';
     dotdot->name[1] = '.';
 
-    this->image_file.clear();
-    this->image_file.seekp(static_cast<uint64_t>(new_block_num) * block_size);
-    this->image_file.write(new_dir_block.data(), block_size);
+    uint32_t tail_offset = block_size - 12;
+    uint32_t tail_inode = 0;
+    uint16_t tail_rec_len = 12;
+    uint8_t tail_name_len = 0;
+    uint8_t tail_file_type = 0xDE;
 
-    Inode new_inode{};
-    new_inode.i_mode = 0x41ED;
-    new_inode.i_links_count = 2;
-    new_inode.i_size_lo = block_size;
+    memcpy(&new_dir_block[tail_offset], &tail_inode, 4);
+    memcpy(&new_dir_block[tail_offset + 4], &tail_rec_len, 2);
+    new_dir_block[tail_offset + 6] = static_cast<char>(tail_name_len);
+    new_dir_block[tail_offset + 7] = static_cast<char>(tail_file_type);
 
-    ExtentHeader header{};
-    header.eh_magic = 0xF30A;
-    header.eh_entries = 1;
-    header.eh_max = 4;
-    header.eh_depth = 0;
-    memcpy(&new_inode.i_block[0], &header, sizeof(ExtentHeader));
-
-    Extent extent{};
-    extent.ee_block = 0;
-    extent.ee_len = 1;
-    extent.ee_start_hi = 0;
-    extent.ee_start_lo = new_block_num;
-    memcpy(&new_inode.i_block[3], &extent, sizeof(Extent));
-
-    uint32_t new_group = this->getGroupFromInode(new_inode_num);
-    uint32_t local_index = (new_inode_num - 1) % this->sb.getInodesPerGroup();
-    uint64_t inode_offset = static_cast<uint64_t>(this->group_descriptors[new_group].bg_inode_table_lo) * block_size +
-                            static_cast<uint64_t>(local_index) * this->sb.getInodeSize();
-
-    this->image_file.clear();
-    this->image_file.seekp(inode_offset);
-    this->image_file.write(reinterpret_cast<char *>(&new_inode), sizeof(Inode));
-
-    uint32_t padding_size = this->sb.getInodeSize() - sizeof(Inode);
-    if (padding_size > 0)
-    {
-        vector<char> padding(padding_size, 0);
-        this->image_file.write(padding.data(), padding_size);
-    }
+    this->writeDirBlockWithChecksum(new_inode_num, new_block_num, new_dir_block);
 
     last_dir_entry->rec_len = used_rec_len;
     uint32_t new_entry_offset = last_offset + used_rec_len;
@@ -455,16 +476,30 @@ void Ext4::FileSystemManager::mkdir(string name)
     memset(new_entry->name, 0, required - 8);
     memcpy(new_entry->name, name.c_str(), name.length());
 
-    this->image_file.clear();
-    this->image_file.seekp(data_block_offset);
-    this->image_file.write(data_block_bytes.data(), block_size);
+    this->writeDirBlockWithChecksum(this->current_inode, data_block, data_block_bytes);
 
-    Inode parent_inode = this->readInode(this->current_inode);
-    parent_inode.i_links_count += 1;
     uint64_t parent_offset = this->getInodeOffset(this->current_inode);
+    vector<char> parent_buffer(inode_size);
     this->image_file.clear();
-    this->image_file.seekp(parent_offset);
-    this->image_file.write(reinterpret_cast<char *>(&parent_inode), sizeof(Inode));
+    this->image_file.seekg(parent_offset);
+    this->image_file.read(parent_buffer.data(), inode_size);
+
+    uint16_t parent_links;
+    memcpy(&parent_links, &parent_buffer[0x1A], 2);
+    parent_links += 1;
+    memcpy(&parent_buffer[0x1A], &parent_links, 2);
+
+    this->writeInodeWithChecksum(this->current_inode, parent_buffer);
+
+    uint32_t new_group = this->getGroupFromInode(new_inode_num);
+    this->group_descriptors[new_group].bg_used_dirs_count += 1;
+    this->updateGroupDescriptorChecksum(new_group);
+
+    this->sb.adjustFreeInodesCount(-1);
+    this->sb.adjustFreeBlocksCount(-1);
+    this->writeSuperBlockToDisk();
+
+    this->image_file.flush();
 
     cout << verde << "Diretório \"" << name << "\" criado com sucesso (inode " << new_inode_num << ")." << reset << endl;
 }
@@ -510,9 +545,11 @@ void Ext4::FileSystemManager::updateGroupDescriptorChecksum(uint32_t group)
     GroupDescriptor &desc = this->group_descriptors[group];
     desc.bg_checksum = checksum_group(this->sb.getRawUUID(), group, reinterpret_cast<char *>(&desc));
 
+    uint32_t desc_size = this->sb.getDescriptorSize();
+
     this->image_file.clear();
     this->image_file.seekp(this->getGroupDescriptorOffset(group));
-    this->image_file.write(reinterpret_cast<char *>(&desc), sizeof(GroupDescriptor));
+    this->image_file.write(reinterpret_cast<char *>(&desc), desc_size);
 }
 
 void Ext4::FileSystemManager::writeInodeWithChecksum(uint32_t inode_num, vector<char> &inode_buf)
@@ -656,6 +693,8 @@ void Ext4::FileSystemManager::rmdir(string name)
     // grupos cujos metadados mudaram e precisam ter o checksum recalculado.
     set<uint32_t> affected_groups;
 
+    map<uint32_t, int32_t> blocks_freed_per_group;
+
     for (uint32_t block : target_blocks)
     {
         uint32_t g = (block - first_data_block) / blocks_per_group;
@@ -674,6 +713,7 @@ void Ext4::FileSystemManager::rmdir(string name)
         this->image_file.write(reinterpret_cast<char *>(&byte), 1);
 
         affected_groups.insert(g);
+        blocks_freed_per_group[g]++;
     }
 
     // recalcula o checksum do bitmap de blocos de cada grupo tocado.
@@ -730,7 +770,11 @@ void Ext4::FileSystemManager::rmdir(string name)
 
     this->writeInodeWithChecksum(this->current_inode, parent_buffer);
 
-    // recalcula bg_checksum e grava cada descritor afetado (depois dos bitmaps).
+    for (auto &[g, count] : blocks_freed_per_group)
+        this->adjustFreeCounters(count, 0, 0, g);
+
+    this->adjustFreeCounters(0, 1, 1, inode_group);
+
     for (uint32_t g : affected_groups)
         this->updateGroupDescriptorChecksum(g);
 
@@ -1108,4 +1152,37 @@ void Ext4::FileSystemManager::writeGroupDescriptors()
     this->image_file.write(
         reinterpret_cast<const char *>(this->group_descriptors.data()),
         this->group_descriptors.size() * this->sb.getDescriptorSize());
+}
+
+void Ext4::FileSystemManager::writeSuperBlockToDisk()
+{
+    uint32_t csum = checksum_superblock(reinterpret_cast<char *>(&this->sb));
+    char *sb_bytes = reinterpret_cast<char *>(&this->sb);
+    memcpy(sb_bytes + 1020, &csum, sizeof(uint32_t));
+    this->image_file.clear();
+    this->image_file.seekp(1024);
+    this->image_file.write(sb_bytes, sizeof(SuperBlock));
+}
+
+void Ext4::FileSystemManager::adjustFreeCounters(int32_t blocks_delta, int32_t inodes_delta,
+                                                  int32_t dirs_delta, uint32_t affected_group)
+{
+    GroupDescriptor &desc = this->group_descriptors[affected_group];
+
+    uint32_t free_blocks = desc.bg_free_blocks_count_lo | (static_cast<uint32_t>(desc.bg_free_blocks_count_hi) << 16);
+    free_blocks = static_cast<uint32_t>(static_cast<int64_t>(free_blocks) + blocks_delta);
+    desc.bg_free_blocks_count_lo = free_blocks & 0xFFFF;
+    desc.bg_free_blocks_count_hi = (free_blocks >> 16) & 0xFFFF;
+
+    uint16_t free_inodes = static_cast<uint16_t>(desc.bg_free_inodes_count + inodes_delta);
+    desc.bg_free_inodes_count = free_inodes;
+
+    uint16_t used_dirs = static_cast<uint16_t>(desc.bg_used_dirs_count - dirs_delta);
+    desc.bg_used_dirs_count = used_dirs;
+
+    this->sb.adjustFreeBlocksCount(blocks_delta);
+    this->sb.adjustFreeInodesCount(inodes_delta);
+
+    this->updateGroupDescriptorChecksum(affected_group);
+    this->writeSuperBlockToDisk();
 }

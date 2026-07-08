@@ -86,6 +86,8 @@ namespace Ext4
         uint32_t getBlocksCount();
         uint32_t getDescriptorSize();
         char *getRawUUID();
+        void adjustFreeBlocksCount(int32_t delta);
+        void adjustFreeInodesCount(int32_t delta);
     };
 
     struct GroupDescriptor
@@ -226,6 +228,9 @@ namespace Ext4
         void freeInodeBit(uint32_t inode_num);
         std::vector<Extent> groupBlocksIntoExtents(const std::vector<uint32_t>& blocks);
         bool writeExtentsToInode(Inode& inode, const std::vector<Extent>& extents);
+
+        void writeSuperBlockToDisk();
+        void adjustFreeCounters(int32_t blocks_delta, int32_t inodes_delta, int32_t dirs_delta, uint32_t affected_group);
 
     public:
         bool setImage(std::string fileName);

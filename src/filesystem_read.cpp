@@ -530,7 +530,9 @@ uint64_t Ext4::FileSystemManager::getGroupDescriptorOffset(uint32_t group)
 {
     uint32_t block_size = this->sb.getBlockSize();
     uint32_t gdt_start_block = (block_size == 1024) ? 2 : 1;
-    return static_cast<uint64_t>(gdt_start_block) * block_size + static_cast<uint64_t>(group) * sizeof(GroupDescriptor);
+    uint32_t desc_size = this->sb.getDescriptorSize();
+
+    return static_cast<uint64_t>(gdt_start_block) * block_size + static_cast<uint64_t>(group) * desc_size;
 }
 
 void Ext4::FileSystemManager::freeBlockBit(uint32_t block_num)
