@@ -150,15 +150,15 @@ int main()
         }
         else if (comand == "export")
         {
-            string host_path, dest_name;
-            cin >> host_path >> dest_name;
-            if (host_path.empty() || dest_name.empty())
+            string ext4_name, host_path;
+            cin >> ext4_name >> host_path;
+            if (ext4_name.empty() || host_path.empty())
             {
-                cout << vermelho << "Uso: export <caminho_no_sistema_local> <nome_no_ext4>" << reset << endl;
+                cout << vermelho << "Uso: export <nome_na_imagem> <caminho_destino_local>" << reset << endl;
                 continue;
             }
-            fs.exportFile(host_path, dest_name);
-}
+            fs.exportFile(ext4_name, host_path);
+        }
         else if (comand == "exit")
         {
             break;

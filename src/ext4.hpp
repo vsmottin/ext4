@@ -243,7 +243,7 @@ namespace Ext4
         void cat(std::string name);
         void rename(std::string name, std::string newName);
         void rm(std::string name);
-        void exportFile(std::string host_path, std::string dest_name);
+        void exportFile(std::string ext4_name, std::string host_path);
     };
 }
 
