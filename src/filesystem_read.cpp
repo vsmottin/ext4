@@ -14,11 +14,22 @@
 
 using namespace std;
 
+/**
+ * @brief Retorna o índice do grupo de blocos ao qual o i-node pertence.
+ * * Realiza o cálculo matemático básico dividindo o número do i-node 
+ * (ajustado com base 0) pela quantidade total de i-nodes por grupo.
+ */
 uint32_t Ext4::FileSystemManager::getGroupFromInode(uint32_t inode_num)
 {
     return (inode_num - 1) / this->sb.getInodesPerGroup();
 }
 
+/**
+ * @brief Busca um nome no diretório atual e retorna sua estrutura de i-node.
+ * * Varre linearmente as entradas (DirEntry) do bloco do diretório atual. 
+ * Se encontrar uma entrada válida cujo nome coincida com o buscado, lê e 
+ * retorna o i-node correspondente; caso contrário, retorna um objeto vazio.
+ */
 Ext4::Inode Ext4::FileSystemManager::resolveNameToInode(const string &path)
 {
     uint32_t block_size = this->sb.getBlockSize();
@@ -66,6 +77,11 @@ Ext4::Inode Ext4::FileSystemManager::resolveNameToInode(const string &path)
     return Inode{};
 }
 
+/**
+ * @brief Exibe as estatísticas globais do sistema de arquivos (comando info).
+ * * Invoca o método interno do superbloco para imprimir no terminal 
+ * as informações e metadados estruturais do disco.
+ */
 bool Ext4::FileSystemManager::info()
 {
     this->sb.superBlockStats();
@@ -154,6 +170,11 @@ void Ext4::FileSystemManager::testb(uint32_t block)
     }
 }
 
+/**
+ * @brief Lista o conteúdo do diretório atual varrendo suas entradas de diretório (Directory Entries).
+ * * O método obtém o bloco de dados associado ao i-node do diretório corrente e calcula sua
+ * posição física no arquivo de imagem (.img).
+ */
 void Ext4::FileSystemManager::ls()
 {
     uint32_t block_size = this->sb.getBlockSize();
@@ -199,6 +220,13 @@ void Ext4::FileSystemManager::ls()
     cout << endl;
 }
 
+/**
+ * @brief Calcula a posição exata (offset em bytes) de um i-node no disco.
+ * @param inode_num Número do i-node.
+ * * Descobre o grupo de blocos do i-node e o seu índice dentro desse grupo.
+ * Em seguida, localiza o início da tabela de i-nodes do grupo via descritor de grupo 
+ * e soma o deslocamento proporcional ao tamanho do i-node.
+ */
 uint64_t Ext4::FileSystemManager::getInodeOffset(uint32_t inode_num)
 {
     uint32_t block_size = this->sb.getBlockSize();
@@ -212,6 +240,13 @@ uint64_t Ext4::FileSystemManager::getInodeOffset(uint32_t inode_num)
     return inode_table_bytes + (index * this->sb.getInodeSize());
 }
 
+/**
+ * @brief Obtém o primeiro bloco de dados de um i-node através da árvore de extents.
+ * @param inode_num Número do i-node.
+ * * Lê o i-node do disco a partir do seu offset, valida o cabeçalho de extents 
+ * (verificando a assinatura mágica e se é um nó folha) e extrai o endereço físico 
+ * do primeiro bloco de dados. Retorna 0 em caso de falha.
+ */
 uint32_t Ext4::FileSystemManager::getInodeDataBlock(uint32_t inode_num)
 {
     uint64_t offset = this->getInodeOffset(inode_num);
@@ -279,6 +314,11 @@ void Ext4::FileSystemManager::attr(string path)
     cout << "Criação:           " << ctime(&t_create);
 }
 
+/**
+ * @brief Exibe o caminho absoluto do diretório atual (comando pwd).
+ * * Imprime diretamente no terminal a string que armazena a rota 
+ * corrente controlada pelo gerenciador.
+ */
 void Ext4::FileSystemManager::pwd()
 {
     cout << this->current_path << endl;
@@ -300,6 +340,11 @@ Ext4::Inode Ext4::FileSystemManager::readInode(uint32_t inode_num)
     return inode;
 }
 
+/**
+ * @brief Verifica se o i-node corresponde a um diretório.
+ * * Aplica uma máscara de bits no campo de modo (i_mode) do i-node 
+ * para isolar o tipo de arquivo e checa se o valor equivale a um diretório (0x4000).
+ */
 bool Ext4::FileSystemManager::isDirectory(const Inode &inode)
 {
     return (inode.i_mode & 0xF000) == 0x4000;

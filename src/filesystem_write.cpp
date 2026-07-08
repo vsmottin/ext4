@@ -48,6 +48,13 @@ bool Ext4::FileSystemManager::setImage(string fileName)
     return true;
 }
 
+/**
+ * @brief Cria um novo arquivo vazio no sistema de arquivos (comando touch).
+ * @param path Nome ou caminho do arquivo a ser criado.
+ * * Localiza o diretório pai, aloca um i-node livre no bitmap e inicializa
+ * seus metadados na tabela de i-nodes. Por fim, insere a nova entrada (DirEntry) 
+ * no bloco de dados do diretório pai e atualiza os checksums.
+ */
 void Ext4::FileSystemManager::touch(string path)
 {
     if (path.length() > 255)
@@ -807,6 +814,14 @@ void Ext4::FileSystemManager::rmdir(string name)
     cout << verde << "Diretório \"" << name << "\" removido com sucesso." << reset << endl;
 }
 
+/**
+ * @brief Altera o nome de um arquivo ou diretório existente (comando rename).
+ * @param name Nome atual do arquivo.
+ * @param newName Novo nome a ser atribuído.
+ * * Varre o bloco de dados do diretório pai para localizar a entrada (DirEntry) 
+ * correspondente ao nome atual. Ao encontrá-la, sobrescreve o campo nominal com o 
+ * novo nome e ajusta o tamanho do nome (name_len), atualizando o checksum do bloco.
+ */
 void Ext4::FileSystemManager::rename(string name, string newName)
 {
     if (newName.length() > 255)
@@ -990,6 +1005,14 @@ void Ext4::FileSystemManager::writeSuperBlockWithChecksum(vector<char> &buffer)
     this->image_file.write(buffer.data(), 1024);
 }
 
+/**
+ * @brief Remove um arquivo regular do sistema de arquivos (comando rm).
+ * @param name Nome do arquivo a ser removido.
+ * * Localiza o i-node do arquivo varrendo linearmente as entradas do diretório pai. 
+ * Após a identificação, remove a respectiva DirEntry do bloco do pai, marca o 
+ * i-node e os blocos de dados contíguos (extents) como livres nos seus mapas de 
+ * bits (bitmaps) e atualiza os checksums do grupo.
+ */
 void Ext4::FileSystemManager::rm(string name)
 {
     vector<string> path = tokenizePath(name);
