@@ -3,7 +3,7 @@
  * @author Caroline Lau, Maria Bambini e Victória Mottin
  * @brief Ponto de entrada do ext4shell; inicializa o FileSystemManager a partir da imagem informada e implementa o loop de leitura e execução de comandos do shell interativo.
  * @date 2026-07-08
- * 
+ *
  */
 
 #include <iostream>
@@ -58,7 +58,7 @@ int main()
         else if (comand == "attr")
         {
             string alvo;
-            cin >> alvo;
+            getline(cin >> ws, alvo);
             fs.attr(trim(alvo));
         }
         else if (comand == "ls")
@@ -96,7 +96,7 @@ int main()
         else if (comand == "cd")
         {
             string path;
-            cin >> path;
+            getline(cin >> ws, path);
             fs.cd(path);
         }
         else if (comand == "mkdir")
@@ -148,7 +148,7 @@ int main()
         else if (comand == "rm")
         {
             string name;
-            cin >> name;
+            getline(cin >> ws, name);
             if (name.empty())
             {
                 cout << vermelho << "Nome inválido" << reset << endl;
