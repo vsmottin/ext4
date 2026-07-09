@@ -3,7 +3,7 @@
  * @author Caroline Lau, Maria Bambini e Victória Mottin
  * @brief Implementa as operações de escrita do sistema de arquivos.
  * @date 2026-07-08
- * 
+ *
  */
 
 #include "ext4.hpp"
@@ -60,7 +60,7 @@ bool Ext4::FileSystemManager::setImage(string fileName)
  * @brief Cria um novo arquivo vazio no sistema de arquivos (comando touch).
  * @param path Nome ou caminho do arquivo a ser criado.
  * * Localiza o diretório pai, aloca um i-node livre no bitmap e inicializa
- * seus metadados na tabela de i-nodes. Por fim, insere a nova entrada (DirEntry) 
+ * seus metadados na tabela de i-nodes. Por fim, insere a nova entrada (DirEntry)
  * no bloco de dados do diretório pai e atualiza os checksums.
  */
 void Ext4::FileSystemManager::touch(string path)
@@ -244,7 +244,7 @@ void Ext4::FileSystemManager::touch(string path)
 }
 
 /**
- * @brief Aloca o primeiro inode livre disponível dentro de um grupo de blocos específico, 
+ * @brief Aloca o primeiro inode livre disponível dentro de um grupo de blocos específico,
  * varrendo bit a bit o bitmap de inodes do grupo até encontrar uma posição livre.
  * @param group: número do grupo de blocos onde o inode deve ser alocado
  * @returns número do inode alocado (1-indexed), ou 0 caso não haja inodes livres disponíveis nesse grupo
@@ -301,8 +301,8 @@ uint32_t Ext4::FileSystemManager::allocateFreeInode(uint32_t group)
 }
 
 /**
- * @brief Aloca o primeiro bloco de dados livre disponível, priorizando o grupo indicado em preferred_group e, 
- * caso esse grupo esteja cheio, buscando nos demais grupos em sequência circular. 
+ * @brief Aloca o primeiro bloco de dados livre disponível, priorizando o grupo indicado em preferred_group e,
+ * caso esse grupo esteja cheio, buscando nos demais grupos em sequência circular.
  * @param preferred_group: grupo de blocos onde a busca deve começar
  * @returns número absoluto do bloco alocado, ou 0 caso não haja blocos livres disponíveis em nenhum grupo do sistema de arquivos
  */
@@ -350,7 +350,7 @@ uint32_t Ext4::FileSystemManager::allocateFreeBlock(uint32_t preferred_group)
 }
 
 /**
- * @brief Implementa o comando mkdir, criando um novo diretório vazio dentro do diretório atual. 
+ * @brief Implementa o comando mkdir, criando um novo diretório vazio dentro do diretório atual.
  * @note Limitação conhecida: assume que o diretório atual (pai) possui todo o
  *       seu conteúdo em um único bloco/extent; diretórios que já ocupem mais
  *       de um bloco não são suportados por esta implementação.
@@ -700,7 +700,7 @@ void Ext4::FileSystemManager::rmdir(string name)
 
                 if (prev != nullptr)
                 {
-                    prev->rec_len += entry->rec_len; //mescla o rec_len do anterior com o removido.
+                    prev->rec_len += entry->rec_len; // mescla o rec_len do anterior com o removido.
                 }
                 else
                 {
@@ -826,8 +826,8 @@ void Ext4::FileSystemManager::rmdir(string name)
  * @brief Altera o nome de um arquivo ou diretório existente (comando rename).
  * @param name Nome atual do arquivo.
  * @param newName Novo nome a ser atribuído.
- * * Varre o bloco de dados do diretório pai para localizar a entrada (DirEntry) 
- * correspondente ao nome atual. Ao encontrá-la, sobrescreve o campo nominal com o 
+ * * Varre o bloco de dados do diretório pai para localizar a entrada (DirEntry)
+ * correspondente ao nome atual. Ao encontrá-la, sobrescreve o campo nominal com o
  * novo nome e ajusta o tamanho do nome (name_len), atualizando o checksum do bloco.
  */
 void Ext4::FileSystemManager::rename(string name, string newName)
@@ -1016,9 +1016,9 @@ void Ext4::FileSystemManager::writeSuperBlockWithChecksum(vector<char> &buffer)
 /**
  * @brief Remove um arquivo regular do sistema de arquivos (comando rm).
  * @param name Nome do arquivo a ser removido.
- * * Localiza o i-node do arquivo varrendo linearmente as entradas do diretório pai. 
- * Após a identificação, remove a respectiva DirEntry do bloco do pai, marca o 
- * i-node e os blocos de dados contíguos (extents) como livres nos seus mapas de 
+ * * Localiza o i-node do arquivo varrendo linearmente as entradas do diretório pai.
+ * Após a identificação, remove a respectiva DirEntry do bloco do pai, marca o
+ * i-node e os blocos de dados contíguos (extents) como livres nos seus mapas de
  * bits (bitmaps) e atualiza os checksums do grupo.
  */
 void Ext4::FileSystemManager::rm(string name)
@@ -1107,8 +1107,19 @@ void Ext4::FileSystemManager::rm(string name)
     inode.i_mode = 0;
     inode.i_dtime = time(nullptr);
     memset(inode.i_block, 0, sizeof(inode.i_block));
-    std::vector<char> inode_buffer(sizeof(Inode));
-    memcpy(inode_buffer.data(), &inode, sizeof(Inode));
+    uint32_t inode_size = this->sb.getInodeSize();
+    std::vector<char> inode_buffer(inode_size, 0);
+
+    this->image_file.clear();
+    this->image_file.seekg(this->getInodeOffset(inode_index));
+    this->image_file.read(inode_buffer.data(), inode_size);
+
+    Inode *inode_to_remove = reinterpret_cast<Inode *>(inode_buffer.data());
+
+    inode_to_remove->i_links_count = 0;
+    inode_to_remove->i_mode = 0;
+    inode_to_remove->i_dtime = static_cast<uint32_t>(time(nullptr));
+    memset(inode_to_remove->i_block, 0, sizeof(inode_to_remove->i_block));
 
     this->writeInodeWithChecksum(inode_index, inode_buffer);
 
@@ -1171,23 +1182,9 @@ void Ext4::FileSystemManager::rm(string name)
 
     this->writeGroupDescriptors();
 
-    // Atualiza o Superbloco
-    // Lemos os 1024 bytes originais do disco
-    vector<char> sb_buffer(1024);
-    this->image_file.clear();
-    this->image_file.seekg(1024);
-    this->image_file.read(sb_buffer.data(), 1024);
+    this->sb.adjustFreeInodesCount(1);
 
-    // Incrementa o s_free_inodes_count (offset 16) no buffer do disco
-    uint32_t *disk_free_inodes = reinterpret_cast<uint32_t *>(&sb_buffer[16]);
-    (*disk_free_inodes)++;
-
-    if (!data_blocks.empty())
-    {
-        uint32_t *disk_free_blocks = reinterpret_cast<uint32_t *>(&sb_buffer[12]);
-        (*disk_free_blocks) += data_blocks.size();
-    }
-    this->writeSuperBlockWithChecksum(sb_buffer);
+    this->writeSuperBlockToDisk();
     this->image_file.flush();
 
     cout << verde << "Arquivo '" << name << "' deletado com sucesso!" << reset << endl;
@@ -1220,7 +1217,7 @@ void Ext4::FileSystemManager::writeSuperBlockToDisk()
 }
 
 void Ext4::FileSystemManager::adjustFreeCounters(int32_t blocks_delta, int32_t inodes_delta,
-                                                  int32_t dirs_delta, uint32_t affected_group)
+                                                 int32_t dirs_delta, uint32_t affected_group)
 {
     GroupDescriptor &desc = this->group_descriptors[affected_group];
 
